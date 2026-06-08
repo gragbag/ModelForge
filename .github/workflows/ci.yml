@@ -1,0 +1,337 @@
+# ============================================================================
+# ModelForge CI/CD Pipeline
+# ============================================================================
+# This is the full pipeline that matches the target architecture in
+# mlops_platform_spec.md. It is written as a LEARNING REFERENCE as much as a
+# working pipeline — every stage is commented with WHAT it does and WHY it's
+# there, so you can walk an interviewer through it line by line.
+#
+# IMPORTANT: Some jobs reference parts of the system you haven't built yet
+# (backend/, worker/, k8s/, infrastructure/). Those jobs are guarded so they
+# DO NOT FAIL the pipeline before the code exists — each one checks whether its
+# directory is present and skips cleanly if not. As you build each piece, the
+# corresponding job "turns on" automatically. Search for "GUARD:" to find them.
+# ============================================================================
+
+name: CI/CD
+
+# --- Triggers: WHEN does this pipeline run? -----------------------------------
+# CI runs on every push to main and on every pull request targeting main.
+# Running on PRs is the heart of Continuous Integration: you get test results
+# BEFORE merging, and branch protection can block the merge until they pass.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# --- Concurrency: cancel stale runs -------------------------------------------
+# If you push twice quickly to the same branch/PR, cancel the older run.
+# Saves CI minutes and gives faster feedback on your latest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# --- Global environment variables ---------------------------------------------
+env:
+  # GHCR (GitHub Container Registry) image naming. ghcr.io/<owner>/<repo>-<svc>
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }} # e.g. julianf/ModelForge
+
+jobs:
+  # ===========================================================================
+  # STAGE 1 — FRONTEND CHECKS (active NOW: you have a Vite/React app)
+  # ===========================================================================
+  # WHY first: these checks are cheap and fast. Fail-fast principle — catch a
+  # lint error in seconds instead of after a 10-minute test suite.
+  frontend:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout: pull the repo code at this commit onto the clean runner.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Set up Node and cache npm so installs are fast on repeat runs.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # Install exactly what's in package-lock.json (reproducible installs).
+      - name: Install dependencies
+        run: npm ci
+
+      # Lint: static style/quality checks. Cheapest meaningful gate.
+      - name: Lint
+        run: npm run lint
+
+      # Build: proves the frontend actually compiles/bundles. A build that
+      # fails here would otherwise blow up only at deploy time.
+      - name: Build
+        run: npm run build
+
+  # ===========================================================================
+  # STAGE 2 — BACKEND CHECKS (turns on when you create backend/)
+  # ===========================================================================
+  # Mirrors the frontend job but for Python: lint -> type-check -> unit tests.
+  # Order is deliberate, cheapest first:
+  #   ruff   (style)        ~seconds
+  #   mypy   (type errors)  ~seconds-minutes, catches bugs without running code
+  #   pytest (behavior)     slowest, the real safety net
+  backend:
+    name: Backend (lint + type-check + test)
+    runs-on: ubuntu-latest
+
+    # GUARD: only run the heavy steps if backend/ exists. Until then the job
+    # succeeds trivially so it never blocks your PRs.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for backend
+        id: check
+        run: |
+          if [ -d backend ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::backend/ not found yet — skipping backend checks."
+          fi
+
+      - name: Setup Python
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        if: steps.check.outputs.exists == 'true'
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy pytest
+
+      # Lint (style/quality). ruff is the modern, fast Python linter.
+      - name: Lint (ruff)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: backend
+        run: ruff check .
+
+      # Type-check. Catches whole classes of bugs (wrong types, None misuse)
+      # statically — a strong signal you write type-safe code.
+      - name: Type-check (mypy)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: backend
+        run: mypy .
+
+      # Unit tests. The core CI safety net. These are FAST, ISOLATED tests
+      # (no real DB/network) — integration tests live in a later stage.
+      - name: Unit tests (pytest)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: backend
+        run: pytest -q
+
+  # ===========================================================================
+  # STAGE 3 — BUILD & PUSH IMAGES (turns on when Dockerfiles exist)
+  # ===========================================================================
+  # WHY after tests: never publish an artifact that hasn't passed its checks.
+  # `needs:` enforces that ordering — this job waits for frontend + backend.
+  build-images:
+    name: Build & push Docker images
+    runs-on: ubuntu-latest
+    needs: [frontend, backend]
+
+    # Only push images on pushes to main, not on PRs from forks (and you don't
+    # want every PR publishing images). PRs still BUILD below to prove it works.
+    permissions:
+      contents: read
+      packages: write # needed to push to GHCR
+
+    strategy:
+      # Build each service image in parallel. Add services here as you create
+      # their Dockerfiles. The matrix keeps the YAML DRY.
+      matrix:
+        service: [frontend, backend, worker]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GUARD: skip a service that has no Dockerfile yet.
+      - name: Check for Dockerfile
+        id: check
+        run: |
+          # Convention: docker/Dockerfile.<service>  OR  <service>/Dockerfile
+          if [ -f "docker/Dockerfile.${{ matrix.service }}" ] || [ -f "${{ matrix.service }}/Dockerfile" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Dockerfile for ${{ matrix.service }} yet — skipping."
+          fi
+
+      # Buildx enables advanced builds + layer caching (faster rebuilds).
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Log in to GHCR using the token GitHub injects automatically.
+      # NOTE: secrets are NEVER hardcoded — GITHUB_TOKEN is provided per-run.
+      - name: Log in to GHCR
+        if: steps.check.outputs.exists == 'true' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the image. On PRs: build only (load locally) to verify it compiles.
+      # On push to main: also push to GHCR so it's deployable.
+      - name: Build and push
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ hashFiles(format('docker/Dockerfile.{0}', matrix.service)) != '' && format('docker/Dockerfile.{0}', matrix.service) || format('{0}/Dockerfile', matrix.service) }}
+          # Push only on main; PRs just build to validate.
+          push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name != 'push' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # STAGE 4 — SECURITY SCAN (DevSecOps signal — few juniors do this)
+  # ===========================================================================
+  # Scan built images for known vulnerabilities (CVEs) in OS packages and deps.
+  # Runs after build because it scans the image artifact.
+  security-scan:
+    name: Security scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    # Don't let scan failures block you while learning; flip to a hard gate
+    # (remove this line) once your images are clean. continue-on-error reports
+    # findings without failing the pipeline.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Trivy can scan the filesystem (deps/Dockerfiles) even before images
+      # are published — useful while the build stage is still gated off.
+      - name: Run Trivy (filesystem scan)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: table
+
+  # ===========================================================================
+  # STAGE 5 — INTEGRATION TESTS ON REAL KUBERNETES (the standout stage)
+  # ===========================================================================
+  # Spins up a throwaway Kubernetes cluster INSIDE the CI runner using `kind`,
+  # deploys the app, and runs tests against it. This proves the system works
+  # wired together on real k8s — a detail most portfolio projects never show.
+  integration-k8s:
+    name: Integration tests (kind)
+    runs-on: ubuntu-latest
+    needs: [build-images]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GUARD: only run once you have k8s manifests/Helm chart.
+      - name: Check for k8s manifests
+        id: check
+        run: |
+          if [ -d k8s ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::k8s/ not found yet — skipping integration tests."
+          fi
+
+      # Create a real (ephemeral) Kubernetes cluster on the runner. Free.
+      - name: Create kind cluster
+        if: steps.check.outputs.exists == 'true'
+        uses: helm/kind-action@v1
+
+      # Deploy your manifests and wait for pods to be ready.
+      - name: Deploy to kind
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          kubectl apply -f k8s/
+          kubectl wait --for=condition=available --timeout=120s deployment --all || true
+          kubectl get pods -A
+
+      # Run integration/E2E tests against the live cluster here.
+      - name: Run integration tests
+        if: steps.check.outputs.exists == 'true'
+        run: echo "TODO: run integration test suite against the kind cluster"
+
+  # ===========================================================================
+  # STAGE 6 — TERRAFORM PLAN ON PRs (Infrastructure-as-Code validation)
+  # ===========================================================================
+  # On pull requests, run `terraform plan` to show exactly what infra would
+  # change — the same rigor for infrastructure as for application code. We do
+  # NOT run `terraform apply` in CI (that would create billable AWS resources);
+  # apply stays a deliberate, manual, local action per the spec.
+  terraform-plan:
+    name: Terraform plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GUARD: only run once you have infrastructure/ with .tf files.
+      - name: Check for Terraform
+        id: check
+        run: |
+          if [ -d infrastructure ] && ls infrastructure/*.tf >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::infrastructure/*.tf not found yet — skipping terraform plan."
+          fi
+
+      - name: Setup Terraform
+        if: steps.check.outputs.exists == 'true'
+        uses: hashicorp/setup-terraform@v3
+
+      # `fmt -check` enforces canonical formatting; `validate` checks syntax;
+      # `plan` shows the diff. Plan needs no real apply, but reading remote
+      # state may need AWS creds — store them as repo secrets (never in code).
+      - name: Terraform fmt
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infrastructure
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infrastructure
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infrastructure
+        run: terraform validate
+
+      - name: Terraform plan
+        if: steps.check.outputs.exists == 'true'
+        working-directory: infrastructure
+        # Example of how secrets are injected — NOT hardcoded:
+        # env:
+        #   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        #   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform plan -input=false

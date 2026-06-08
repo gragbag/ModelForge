@@ -1,0 +1,38 @@
+# ============================================================================
+# ModelForge backend dependencies
+# ----------------------------------------------------------------------------
+# Grouped by purpose so you understand what each thing is for. Pinned to
+# compatible minimum versions; `pip install -r requirements.txt` installs all.
+# ============================================================================
+
+# --- Web API ---------------------------------------------------------------
+fastapi>=0.115              # the web framework (routes, validation, OpenAPI docs)
+uvicorn[standard]>=0.32     # the ASGI server that actually runs FastAPI
+python-multipart>=0.0.12    # needed for file uploads (the CSV upload endpoint)
+
+# --- Data validation -------------------------------------------------------
+pydantic>=2.9               # request/response models & settings (FastAPI uses this)
+pydantic-settings>=2.6      # load config from environment variables
+
+# --- Database --------------------------------------------------------------
+sqlalchemy>=2.0             # the ORM (Python objects <-> Postgres tables)
+psycopg2-binary>=2.9        # the PostgreSQL driver SQLAlchemy talks through
+alembic>=1.13               # database migrations (versioned schema changes)
+
+# --- Background jobs -------------------------------------------------------
+celery>=5.4                 # distributed task queue (runs training jobs)
+redis>=5.1                  # the broker/result backend Celery uses
+
+# --- Object storage --------------------------------------------------------
+boto3>=1.35                 # AWS SDK for Python (talks to S3 / LocalStack)
+
+# --- Machine learning ------------------------------------------------------
+scikit-learn>=1.5           # the ML models (random forest, etc.) + metrics
+pandas>=2.2                 # reads the CSV into a dataframe
+joblib>=1.4                 # serializes the trained model to a file artifact
+
+# --- Dev / CI tools --------------------------------------------------------
+ruff>=0.7                   # linter/formatter (your CI runs this)
+mypy>=1.13                  # static type checker (your CI runs this)
+pytest>=8.3                 # test runner (your CI runs this)
+httpx>=0.27                 # test client for hitting the API in tests
