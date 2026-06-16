@@ -16,16 +16,40 @@ Then open:
     http://localhost:8000/docs      -> interactive OpenAPI docs (free with FastAPI)
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
+from app.api import datasets, jobs
 from app.core.config import settings
+from app.services import storage
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Runs once on startup (before `yield`) and once on shutdown (after).
+    On startup we make sure the S3 buckets exist, so uploads have somewhere to
+    go. This is the "auto-create buckets on startup" choice you picked.
+    """
+    storage.ensure_buckets()
+    yield
+    # (nothing to clean up on shutdown for now)
+
 
 # Creating the app object. The title/version show up in the auto-generated docs.
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="A cloud-native MLOps platform for training and serving models.",
+    lifespan=lifespan,
 )
+
+# Register the datasets endpoints (POST /datasets, GET /datasets).
+app.include_router(datasets.router)
+
+# Register the jobs endpoints (POST /jobs, GET /jobs/{id}).
+app.include_router(jobs.router)
 
 
 @app.get("/health")
@@ -37,14 +61,3 @@ def health_check() -> dict[str, str]:
     your container is alive, and it's the simplest possible proof the API runs.
     """
     return {"status": "ok", "app": settings.app_name, "environment": settings.environment}
-
-
-# ---------------------------------------------------------------------------
-# TODO(you) — in later steps you'll add the real routers, e.g.:
-#
-#   from app.api import datasets, jobs
-#   app.include_router(datasets.router)
-#   app.include_router(jobs.router)
-#
-# Leave them commented until those modules exist.
-# ---------------------------------------------------------------------------

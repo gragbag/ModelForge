@@ -1,0 +1,84 @@
+# ============================================================================
+# ModelForge — local development services
+# ----------------------------------------------------------------------------
+# This brings up the SUPPORTING services your backend talks to:
+#   - postgres    : the database (stores datasets, jobs, etc.)
+#   - redis       : the queue Celery uses to hand jobs to the worker (Step 5)
+#   - localstack  : a fake AWS S3 running locally, so you never touch real AWS
+#
+# Run everything with:
+#     docker compose up -d        # -d = detached (runs in the background)
+# Check status:
+#     docker compose ps
+# Stop everything:
+#     docker compose down         # add -v to also wipe the data volumes
+#
+# NOTE: right now this only runs the *supporting* services. We'll add the
+# `backend` and `worker` containers here in Step 7, once they have Dockerfiles.
+# During development you'll run the API directly with uvicorn (faster reloads)
+# and let it connect to these containers.
+# ============================================================================
+
+services:
+  # --- PostgreSQL: the relational database --------------------------------
+  postgres:
+    image: postgres:16
+    container_name: modelforge-postgres
+    # Auto-restart after a reboot or crash, unless you explicitly stopped it
+    # (e.g. with `docker compose stop`/`down`). So services come back on boot.
+    restart: unless-stopped
+    environment:
+      # These create the database + user on first startup. They must match the
+      # DATABASE_URL your app uses (see backend/app/core/config.py).
+      POSTGRES_USER: modelforge
+      POSTGRES_PASSWORD: modelforge
+      POSTGRES_DB: modelforge
+    ports:
+      - "5432:5432" # host:container — lets your local uvicorn reach the DB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # persists data across restarts
+    healthcheck:
+      # Compose can tell when postgres is actually ready to accept connections.
+      test: ["CMD-SHELL", "pg_isready -U modelforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- Redis: the message broker for Celery (used in Step 5) --------------
+  redis:
+    image: redis:7
+    container_name: modelforge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- LocalStack: a local stand-in for AWS S3 ----------------------------
+  localstack:
+    image: localstack/localstack:3
+    container_name: modelforge-localstack
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3 # we only need S3 for now
+      - DEBUG=0
+      - PERSISTENCE=1 # keep S3 data (buckets/objects) across restarts
+    ports:
+      - "4566:4566" # the single LocalStack edge port (matches s3_endpoint_url)
+    volumes:
+      # Persist LocalStack's state to a named volume, so buckets survive a
+      # restart — same idea as the postgres_data volume below.
+      - localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:4566/_localstack/health | grep -q '\"s3\": \"available\"' || curl -s http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# Named volumes so data survives `docker compose down` (but not down -v).
+volumes:
+  postgres_data:
+  localstack_data:
