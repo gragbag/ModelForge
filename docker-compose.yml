@@ -13,13 +13,65 @@
 # Stop everything:
 #     docker compose down         # add -v to also wipe the data volumes
 #
-# NOTE: right now this only runs the *supporting* services. We'll add the
-# `backend` and `worker` containers here in Step 7, once they have Dockerfiles.
-# During development you'll run the API directly with uvicorn (faster reloads)
-# and let it connect to these containers.
+# This now runs the ENTIRE stack: your backend + worker, plus the supporting
+# services (postgres, redis, localstack). `docker compose up` boots everything.
+#
+# Note: the backend and worker share ONE image (built from backend/Dockerfile);
+# they differ only in the command they run. Inside the Docker network they reach
+# each other by SERVICE NAME (postgres, redis, localstack) — not localhost —
+# which is why the env vars below use those names.
 # ============================================================================
 
 services:
+  # --- Backend API (your code) --------------------------------------------
+  backend:
+    build:
+      context: ./backend
+    image: modelforge-app # name the built image so the worker can reuse it
+    container_name: modelforge-backend
+    restart: unless-stopped
+    environment:
+      # Inside the network, reach services by name (not localhost). These env
+      # vars override the defaults in app/core/config.py.
+      DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://localstack:4566
+      RUN_MIGRATIONS: "true" # backend runs migrations on startup (entrypoint.sh)
+    ports:
+      - "8000:8000" # expose the API on the host
+    depends_on:
+      # Wait until each dependency is HEALTHY before starting (so migrations and
+      # bucket-creation don't run against a not-yet-ready service).
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # --- Celery worker (same image, different command) ----------------------
+  worker:
+    build:
+      context: ./backend
+    image: modelforge-app # reuses the image built by `backend`
+    container_name: modelforge-worker
+    restart: unless-stopped
+    # Override the default CMD: run a Celery worker instead of uvicorn.
+    command: ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://localstack:4566
+      # No RUN_MIGRATIONS here — only the backend should run migrations.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      backend:
+        condition: service_started # start after backend (which runs migrations)
   # --- PostgreSQL: the relational database --------------------------------
   postgres:
     image: postgres:16

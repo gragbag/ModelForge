@@ -1,0 +1,15 @@
+# Files NOT copied into the Docker image. Keeps the build fast and the image
+# small. The big one is .venv — it's huge, host-specific, and rebuilt inside
+# the image anyway, so never copy it in.
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+.env
+*.md
