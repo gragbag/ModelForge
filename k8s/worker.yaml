@@ -1,0 +1,37 @@
+# Celery worker: a Deployment ONLY — no Service.
+#
+# Why no Service? A Service exists to give pods a stable address so OTHER things
+# can connect to them. Nothing connects to the worker — it reaches OUT to Redis
+# to pull jobs. So it needs no inbound address.
+#
+# This is also the star of the scaling demo:
+#     kubectl -n modelforge scale deployment/worker --replicas=4
+# bumps `replicas` below and k8s spins up 4 worker pods, all pulling from the
+# same Redis queue in parallel. That's horizontal scaling in one command.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: modelforge
+spec:
+  replicas: 1 # start with 1; scale up live to demonstrate horizontal scaling
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: modelforge-app:latest
+          imagePullPolicy: IfNotPresent
+          # Override the image's default CMD (uvicorn) to run a Celery worker —
+          # same image, different command, exactly like docker-compose did.
+          command: ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: modelforge-config
+          # No RUN_MIGRATIONS — only the backend runs migrations.

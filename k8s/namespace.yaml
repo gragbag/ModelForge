@@ -1,0 +1,9 @@
+# A Namespace groups all ModelForge objects together, isolated from other apps
+# in the cluster. Everything else sets `namespace: modelforge`.
+#
+# Apply order matters a little: this must exist before objects that live in it,
+# which is why it's listed first / applied first.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: modelforge

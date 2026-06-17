@@ -1,0 +1,34 @@
+# Configuration shared by the backend and worker.
+#
+# Two objects:
+#   - ConfigMap: NON-secret settings (URLs, hostnames). Note the hostnames are
+#     k8s SERVICE names (postgres, redis, localstack) — same service-name
+#     networking idea as docker-compose, just within the cluster.
+#   - Secret: sensitive values (DB credentials). In k8s these are stored
+#     separately and base64-encoded. (Not truly encrypted at rest by default,
+#     but the right place to put credentials — and what you'd back with a real
+#     secrets manager in production.)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modelforge-config
+  namespace: modelforge
+data:
+  # Reach other services by their k8s Service name (defined in their manifests).
+  DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT_URL: http://localstack:4566
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: modelforge-secret
+  namespace: modelforge
+type: Opaque
+stringData:
+  # `stringData` lets us write plain text; k8s base64-encodes it for us.
+  # (These match the Postgres credentials below; in real life they'd be strong
+  # and come from a secrets manager.)
+  POSTGRES_USER: modelforge
+  POSTGRES_PASSWORD: modelforge
