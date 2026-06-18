@@ -1,0 +1,7 @@
+# Terraform — don't commit downloaded providers, local state, or var files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# DO commit .terraform.lock.hcl (pins provider versions for reproducibility)
