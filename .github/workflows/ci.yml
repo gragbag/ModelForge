@@ -161,6 +161,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      
+      - name: Lowercase image prefix
+        run: echo "IMAGE_PREFIX=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       # GUARD: skip a service that has no Dockerfile yet.
       - name: Check for Dockerfile
@@ -195,8 +198,8 @@ jobs:
         if: steps.check.outputs.exists == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ${{ hashFiles(format('docker/Dockerfile.{0}', matrix.service)) != '' && format('docker/Dockerfile.{0}', matrix.service) || format('{0}/Dockerfile', matrix.service) }}
+          context: ${{ matrix.service }}
+          file: ${{ matrix.service }}/Dockerfile
           # Push only on main; PRs just build to validate.
           push: ${{ github.event_name == 'push' }}
           load: ${{ github.event_name != 'push' }}
