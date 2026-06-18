@@ -230,7 +230,7 @@ jobs:
       # Trivy can scan the filesystem (deps/Dockerfiles) even before images
       # are published — useful while the build stage is still gated off.
       - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
@@ -272,6 +272,7 @@ jobs:
       - name: Deploy to kind
         if: steps.check.outputs.exists == 'true'
         run: |
+          kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/
           kubectl wait --for=condition=available --timeout=120s deployment --all || true
           kubectl get pods -A
