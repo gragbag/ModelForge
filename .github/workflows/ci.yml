@@ -276,7 +276,8 @@ jobs:
       # Run integration/E2E tests against the live cluster here.
       - name: Run integration tests
         if: steps.check.outputs.exists == 'true'
-        run: echo "TODO: run integration test suite against the kind cluster"
+        run: |
+          echo "TODO: run integration test suite against the kind cluster"
 
   # ===========================================================================
   # STAGE 6 — TERRAFORM PLAN ON PRs (Infrastructure-as-Code validation)
