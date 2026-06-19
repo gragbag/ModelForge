@@ -1,0 +1,15 @@
+# Grafana data source provisioning.
+#
+# This auto-connects Grafana to Prometheus on startup, so you don't have to
+# click through the UI to add it. Grafana reads this file from
+# /etc/grafana/provisioning/datasources/ (mounted in docker-compose).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Reach Prometheus by its service name on the compose network.
+    url: http://prometheus:9090
+    isDefault: true

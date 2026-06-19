@@ -1,0 +1,17 @@
+# Prometheus configuration.
+#
+# Prometheus works by "scraping" — periodically pulling the /metrics endpoint of
+# each target and storing the numbers as time-series data. Here we tell it to
+# scrape your backend.
+
+global:
+  scrape_interval: 15s # how often to pull metrics from each target
+
+scrape_configs:
+  # One scrape job for the ModelForge backend.
+  - job_name: "modelforge-backend"
+    # `backend:8000` is the service name on the docker-compose network (same
+    # service-name networking as everything else). Prometheus scrapes
+    # http://backend:8000/metrics by default (the path the instrumentator exposes).
+    static_configs:
+      - targets: ["backend:8000"]
