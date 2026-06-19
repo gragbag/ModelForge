@@ -29,8 +29,17 @@ celery_app = Celery(
     include=["app.services.tasks"],
 )
 
-# A couple of sensible defaults (optional but conventional).
 celery_app.conf.update(
     task_track_started=True,   # report a "STARTED" state while a task runs
     task_time_limit=600,       # hard-kill a task after 10 minutes (safety net)
+    # --- Reliability (Step 12) -------------------------------------------
+    # acks_late: only acknowledge a task to the broker AFTER it finishes. So if
+    # a worker DIES mid-task, the un-acked job is redelivered to another worker
+    # instead of being lost. (Default is to ack on receipt, before running.)
+    task_acks_late=True,
+    # Actually redeliver the job if the worker process is lost/killed.
+    task_reject_on_worker_lost=True,
+    # Each worker process pulls ONE task at a time (doesn't hoard a batch).
+    # Fairer distribution across workers, and safer with acks_late.
+    worker_prefetch_multiplier=1,
 )
