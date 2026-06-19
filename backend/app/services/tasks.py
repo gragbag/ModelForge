@@ -1,19 +1,21 @@
 """
-Celery tasks — the functions that run inside the WORKER process (not the API).
+Celery tasks — run inside the WORKER process.
 
-Step 6: this now does REAL training. The task is the "orchestrator" — it does
-the plumbing (load job, download data, save model, update DB) and delegates the
-actual ML to the pure functions in services/training.py.
+Step 12 adds RELIABILITY around the training work:
+  - retries with exponential backoff on transient failures
+  - idempotency (safe to run a job more than once)
+  - permanent failures recorded as FAILED ("dead-letter" visibility)
+  - acks_late (configured in celery_app.py) so a dying worker's job is redelivered
 
-Flow:
-    QUEUED -> RUNNING -> [download CSV -> train -> upload model] -> COMPLETED
-                                                                 \-> FAILED (on error)
+The core idea: tell TRANSIENT failures (retry) apart from PERMANENT ones (fail fast).
 """
 
 import io
 
 import joblib
 import pandas as pd
+from botocore.exceptions import BotoCoreError, ClientError
+from sqlalchemy.exc import OperationalError
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
@@ -22,10 +24,43 @@ from app.models.dataset import Dataset
 from app.models.job import Job, JobStatus
 from app.services import storage, training
 
+# Connection-level errors worth RETRYING — momentary network/endpoint/DB
+# glitches. NOTE: ClientError is deliberately NOT here anymore. A boto3
+# ClientError wraps an HTTP error from S3, and those split into two kinds —
+# 5xx (transient) and 4xx like 404 (permanent) — so we classify it separately
+# in `_is_transient_client_error` below rather than blindly retrying all of them.
+TRANSIENT_ERRORS = (BotoCoreError, OperationalError, ConnectionError)
 
-@celery_app.task(name="train_model")
-def train_model_task(job_id: int) -> None:
-    """Train a model for the given job id, in the background worker."""
+
+def _is_transient_client_error(exc: ClientError) -> bool:
+    """A boto3 ClientError wraps an HTTP error response from S3.
+      - 5xx  -> the SERVER had a problem  -> transient, worth retrying
+      - 4xx  -> OUR request was bad (e.g. 404 file-not-found, 403 forbidden)
+                -> permanent, retrying can't help
+
+    TODO(you): return True only for 5xx status codes. The HTTP status lives at:
+        exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+    Return whether that status is >= 500.
+    """
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+    return status >= 500
+
+
+def _mark_failed(db, job: Job | None, message: str) -> None:
+    """Record a permanent failure so it's visible via GET /jobs/{id} — our
+    'dead-letter' handling: failed jobs are captured, never silently lost."""
+    if job is not None:
+        job.status = JobStatus.FAILED
+        job.error = message
+        db.commit()
+
+
+@celery_app.task(
+    bind=True,        # `bind=True` gives us `self` -> self.retry(), self.request.retries
+    name="train_model",
+    max_retries=3,    # retry a transient failure up to 3 times
+)
+def train_model_task(self, job_id: int) -> None:
     db = SessionLocal()
     job = None
     try:
@@ -33,29 +68,28 @@ def train_model_task(job_id: int) -> None:
         if job is None:
             return  # job was deleted before the worker got to it
 
-        # Mark RUNNING so GET /jobs/{id} reflects progress.
+        # ---- IDEMPOTENCY guard ------------------------------------------
+        # A job can be delivered MORE THAN ONCE: a retry, or acks_late
+        # redelivering after a worker died right after finishing. Re-running a
+        # finished job wastes work and overwrites good results.
+        #
+        # TODO(you): return early if the job is already done. One line:
+        #     if job.status == JobStatus.COMPLETED:
+        #         return
+
+        if job.status == JobStatus.COMPLETED:
+            return
+
         job.status = JobStatus.RUNNING
         db.commit()
 
-        # Look up the dataset this job trains on (we need its S3 key).
         dataset = db.get(Dataset, job.dataset_id)
         if dataset is None:
             raise ValueError(f"Dataset {job.dataset_id} not found")
-        
+
         raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
         df = pd.read_csv(io.BytesIO(raw))
 
-        # ------------------------------------------------------------------
-        # TODO(you): download the CSV from S3 and load it into a DataFrame.
-        #
-        # 1) Download the raw bytes from the datasets bucket:
-        #        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
-        #
-        # 2) Load into pandas (same trick as the upload endpoint):
-        #        df = pd.read_csv(io.BytesIO(raw))
-        # ------------------------------------------------------------------
-
-        # --- Train (delegates to the pure ML service) ---------------------
         model, metrics = training.train_and_evaluate(
             df=df,
             target_column=job.target_column,
@@ -63,38 +97,48 @@ def train_model_task(job_id: int) -> None:
             model_type=job.model_type,
         )
 
-        # ------------------------------------------------------------------
-        # TODO(you): serialize the trained model and upload it to S3.
-        #
-        # 1) joblib serializes a model to bytes via a buffer:
-        #        buffer = io.BytesIO()
-        #        joblib.dump(model, buffer)
-        #
-        # 2) Pick a key and upload to the MODELS bucket:
-        #        model_key = f"models/{job.id}/model.joblib"
-        #        storage.upload_fileobj(buffer.getvalue(), settings.s3_bucket_models, model_key)
-        #
-        # 3) Record where it was saved on the job:
-        #        job.model_s3_key = model_key
-        # ------------------------------------------------------------------
+        # Deterministic key: a re-run overwrites the SAME S3 object rather than
+        # creating duplicates — another piece of idempotency.
         buffer = io.BytesIO()
         joblib.dump(model, buffer)
-
         model_key = f"models/{job.id}/model.joblib"
         storage.upload_fileobj(buffer.getvalue(), settings.s3_bucket_models, model_key)
-        job.model_s3_key = model_key
 
-        # --- Save results + mark COMPLETED --------------------------------
+        job.model_s3_key = model_key
         job.metrics = metrics
         job.status = JobStatus.COMPLETED
         db.commit()
 
-    except Exception as exc:
-        # Record the failure so it's visible via GET /jobs/{id} instead of silent.
-        if job is not None:
-            job.status = JobStatus.FAILED
-            job.error = str(exc)
-            db.commit()
+    except ClientError as exc:
+        # ---- S3 returned an HTTP error -> classify before retrying --------
+        # 5xx = transient (retry); 4xx like 404 = permanent (fail fast). This is
+        # the precise classification that stops us pointlessly retrying a 404.
+        if _is_transient_client_error(exc) and self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+        _mark_failed(db, job, str(exc))
         raise
+
+    except TRANSIENT_ERRORS as exc:
+        # ---- Transient failure -> RETRY with exponential backoff ----------
+        if self.request.retries >= self.max_retries:
+            # Out of retries -> give up and record a permanent failure.
+            _mark_failed(db, job, f"Failed after {self.request.retries} retries: {exc}")
+            raise
+
+        # TODO(you): trigger the retry. Celery re-queues the job and re-runs it
+        # after `countdown` seconds. Exponential backoff = 2 ** attempt, so the
+        # waits grow 2s, 4s, 8s as retries climb:
+        #     raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+        #
+        # (self.retry raises a special exception Celery catches to reschedule —
+        #  so it doesn't fall through to the handler below.)
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+
+    except Exception as exc:
+        # ---- Permanent failure (e.g. bad data / missing column) -----------
+        # Not in TRANSIENT_ERRORS, so retrying wouldn't help. Record + re-raise.
+        _mark_failed(db, job, str(exc))
+        raise
+
     finally:
         db.close()
