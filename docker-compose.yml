@@ -130,7 +130,41 @@ services:
       timeout: 5s
       retries: 10
 
+  # --- Prometheus: scrapes & stores metrics from the backend --------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: modelforge-prometheus
+    restart: unless-stopped
+    volumes:
+      # Mount our scrape config into the container.
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090" # Prometheus UI at http://localhost:9090
+    depends_on:
+      - backend
+
+  # --- Grafana: dashboards on top of Prometheus ---------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: modelforge-grafana
+    restart: unless-stopped
+    environment:
+      # Default login. (Fine for local dev; never hardcode in production.)
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      # Auto-provision the Prometheus data source on startup.
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000" # Grafana UI at http://localhost:3000
+    depends_on:
+      - prometheus
+
 # Named volumes so data survives `docker compose down` (but not down -v).
 volumes:
   postgres_data:
   localstack_data:
+  prometheus_data:
+  grafana_data:
