@@ -21,7 +21,7 @@ Reference docs: https://docs.sqlalchemy.org/en/20/orm/quickstart.html
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -37,6 +37,8 @@ class Dataset(Base):
     size_bytes: Mapped[int] = mapped_column(nullable=False)
     row_count: Mapped[int | None] = mapped_column(nullable=False)
     column_count: Mapped[int | None] = mapped_column(nullable=False)
+    # The user who uploaded this dataset (Wave 2 ownership).
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     # ------------------------------------------------------------------
     # TODO(you): add the rest of the columns this dataset needs.

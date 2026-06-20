@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import datasets, jobs
+from app.api import auth, datasets, jobs
 from app.core.config import settings
 from app.services import storage
 
@@ -45,6 +45,9 @@ app = FastAPI(
     description="A cloud-native MLOps platform for training and serving models.",
     lifespan=lifespan,
 )
+
+# Register the auth endpoints (register, login, refresh, me).
+app.include_router(auth.router)
 
 # Register the datasets endpoints (POST /datasets, GET /datasets).
 app.include_router(datasets.router)
