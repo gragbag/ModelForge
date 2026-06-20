@@ -6,7 +6,7 @@
 # ============================================================================
 
 # --- Web API ---------------------------------------------------------------
-fastapi>=0.115              # the web framework (routes, validation, OpenAPI docs)
+fastapi>=0.115,<0.137       # <0.137: 0.137 breaks prometheus-fastapi-instrumentator
 uvicorn[standard]>=0.32     # the ASGI server that actually runs FastAPI
 python-multipart>=0.0.12    # needed for file uploads (the CSV upload endpoint)
 
@@ -33,6 +33,11 @@ joblib>=1.4                 # serializes the trained model to a file artifact
 
 # --- Observability ---------------------------------------------------------
 prometheus-fastapi-instrumentator>=7.0  # exposes /metrics for Prometheus
+
+# --- Auth ------------------------------------------------------------------
+bcrypt>=4.2                 # password hashing
+pyjwt>=2.9                  # create/verify JSON Web Tokens
+email-validator>=2.2        # validates EmailStr fields in schemas
 
 # --- Dev / CI tools --------------------------------------------------------
 ruff>=0.7                   # linter/formatter (your CI runs this)

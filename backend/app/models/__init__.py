@@ -6,5 +6,6 @@ won't know about it. So we re-export them from one place.
 
 from app.models.dataset import Dataset
 from app.models.job import Job
+from app.models.user import User
 
-__all__ = ["Dataset", "Job"]
+__all__ = ["Dataset", "Job", "User"]

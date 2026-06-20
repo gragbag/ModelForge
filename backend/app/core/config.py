@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     s3_bucket_datasets: str = "datasets"
     s3_bucket_models: str = "models"
 
+    # --- Auth / JWT --------------------------------------------------------
+    # The secret used to SIGN tokens. Anyone with this can forge tokens, so in
+    # production it MUST come from real secrets management (never this default).
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60      # access tokens expire after 1 hour
+    refresh_token_expire_days: int = 7         # refresh tokens last a week
+
 
 # A single shared settings instance the rest of the app imports.
 settings = Settings()

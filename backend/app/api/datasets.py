@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.deps import get_current_user
 from app.models.dataset import Dataset
+from app.models.user import Role, User
 from app.schemas.dataset import DatasetRead
 from app.services import storage
 
@@ -29,7 +31,11 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
 @router.post("", response_model=DatasetRead, status_code=201)
-def upload_dataset(file: UploadFile, db: Session = Depends(get_db)) -> Dataset:
+def upload_dataset(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- requires a valid token
+) -> Dataset:
     """
     Upload a CSV. `file: UploadFile` is how FastAPI receives an uploaded file.
     `db: Session = Depends(get_db)` injects a database session for this request.
@@ -53,62 +59,29 @@ def upload_dataset(file: UploadFile, db: Session = Depends(get_db)) -> Dataset:
     storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, s3_key)
 
     dataset = Dataset(
-               filename=file.filename,
-               s3_key=s3_key,
-               size_bytes=len(raw_bytes),
-               row_count=row_count,
-               column_count=column_count,
-            )
+        filename=file.filename,
+        s3_key=s3_key,
+        size_bytes=len(raw_bytes),
+        row_count=row_count,
+        column_count=column_count,
+        owner_id=current_user.id,
+    )
     db.add(dataset)       # stage the insert
     db.commit()           # actually write to Postgres
     db.refresh(dataset)   # reload so dataset.id / created_at are populated
 
     return dataset
 
-    # ------------------------------------------------------------------
-    # TODO(you): implement the upload flow. Steps, with hints:
-    #
-    # 1) Parse the CSV to count rows/columns.
-    #    Hint: pandas can read bytes via an in-memory buffer:
-    #        import io
-    #        df = pd.read_csv(io.BytesIO(raw_bytes))
-    #        row_count = df.shape[0]
-    #        column_count = df.shape[1]
-    #    Wrap this in try/except and raise HTTPException(400, ...) on a parse
-    #    error, so a bad file returns a clean 400 instead of a 500.
-    #
-    # 2) Decide the S3 key (where the file lives in the bucket). A common
-    #    pattern is to namespace by something unique. Since we don't have the
-    #    dataset id yet (the DB assigns it on insert), a simple approach:
-    #        s3_key = f"uploads/{file.filename}"
-    #    (We can make this nicer later; uniqueness isn't critical for now.)
-    #
-    # 3) Upload the bytes to S3:
-    #        storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, s3_key)
-    #
-    # 4) Create the DB row and save it:
-    #        dataset = Dataset(
-    #            filename=file.filename,
-    #            s3_key=s3_key,
-    #            size_bytes=len(raw_bytes),
-    #            row_count=row_count,
-    #            column_count=column_count,
-    #        )
-    #        db.add(dataset)       # stage the insert
-    #        db.commit()           # actually write to Postgres
-    #        db.refresh(dataset)   # reload so dataset.id / created_at are populated
-    #
-    # 5) `return dataset` — FastAPI converts the SQLAlchemy object to a
-    #    DatasetRead automatically (because of from_attributes=True).
-    # ------------------------------------------------------------------
-    raise HTTPException(status_code=501, detail="TODO(you): implement upload_dataset")
-
 
 @router.get("", response_model=list[DatasetRead])
-def list_datasets(db: Session = Depends(get_db)) -> list[Dataset]:
-    """
-    List all datasets. Built for you as a reference for how a DB read looks in
-    SQLAlchemy 2.0: build a select() statement, execute it, get the objects.
-    """
-    result = db.execute(select(Dataset).order_by(Dataset.created_at.desc()))
+def list_datasets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- requires a valid token
+) -> list[Dataset]:
+    """List datasets. Regular users see only their own; admins see all."""
+    stmt = select(Dataset).order_by(Dataset.created_at.desc())
+    if current_user.role != Role.ADMIN:
+        stmt = stmt.where(Dataset.owner_id == current_user.id)
+
+    result = db.execute(stmt)
     return list(result.scalars().all())

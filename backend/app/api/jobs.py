@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.deps import get_current_user
 from app.models.dataset import Dataset
 from app.models.job import Job
+from app.models.user import Role, User
 from app.schemas.job import JobCreate, JobRead
 from app.services.tasks import train_model_task
 
@@ -24,16 +26,23 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.post("", response_model=JobRead, status_code=201)
-def create_job(payload: JobCreate, db: Session = Depends(get_db)) -> Job:
+def create_job(
+    payload: JobCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- requires a valid token
+) -> Job:
     """
     Submit a training job. `payload: JobCreate` is the validated request body —
     by the time this runs, Pydantic has guaranteed the fields are present and
     the right types.
     """
-    # Make sure the referenced dataset actually exists (a 404 is clearer than a
-    # foreign-key error later).
+    # Make sure the referenced dataset exists AND belongs to this user (you
+    # shouldn't be able to train on someone else's data). 404 either way so we
+    # don't reveal that a dataset exists but belongs to someone else.
     dataset = db.get(Dataset, payload.dataset_id)
-    if dataset is None:
+    if dataset is None or (
+        dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     job = Job(
@@ -41,6 +50,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)) -> Job:
         model_type=payload.model_type,
         target_column=payload.target_column,
         task_type=payload.task_type,
+        owner_id=current_user.id,
     )
     db.add(job)
     db.commit()
@@ -54,12 +64,17 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)) -> Job:
 
 
 @router.get("/{job_id}", response_model=JobRead)
-def get_job(job_id: int, db: Session = Depends(get_db)) -> Job:
-    """
-    Fetch a single job by id. Built for you — this is what the user polls to see
-    whether their job has finished and to read the metrics.
-    """
+def get_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- requires a valid token
+) -> Job:
+    """Fetch a job by id — but only if it's YOURS (admins can see any)."""
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.owner_id != current_user.id and current_user.role != Role.ADMIN:
+        raise HTTPException(status_code=404, detail="Job not found")
+
     return job
