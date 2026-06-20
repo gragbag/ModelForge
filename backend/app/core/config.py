@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = "test"
     s3_bucket_datasets: str = "datasets"
     s3_bucket_models: str = "models"
+    s3_bucket_mlflow: str = "mlflow-artifacts"   # where MLflow stores artifacts
+
+    # --- MLflow ------------------------------------------------------------
+    # The tracking server the worker logs runs to. localhost for host-dev;
+    # docker-compose overrides this to http://mlflow:5000 (service name).
+    mlflow_tracking_uri: str = "http://localhost:5000"
 
     # --- Auth / JWT --------------------------------------------------------
     # The secret used to SIGN tokens. Anyone with this can forge tokens, so in

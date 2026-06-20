@@ -33,7 +33,11 @@ def ensure_buckets() -> None:
     Called once on app startup (see main.py). Safe to call repeatedly.
     """
     existing = {b["Name"] for b in _s3_client.list_buckets().get("Buckets", [])}
-    for bucket in (settings.s3_bucket_datasets, settings.s3_bucket_models):
+    for bucket in (
+        settings.s3_bucket_datasets,
+        settings.s3_bucket_models,
+        settings.s3_bucket_mlflow,  # MLflow stores run artifacts here
+    ):
         if bucket not in existing:
             _s3_client.create_bucket(Bucket=bucket)
 

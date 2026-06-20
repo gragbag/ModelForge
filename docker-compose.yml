@@ -36,6 +36,7 @@ services:
       DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://localstack:4566
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       RUN_MIGRATIONS: "true" # backend runs migrations on startup (entrypoint.sh)
     ports:
       - "8000:8000" # expose the API on the host
@@ -62,6 +63,7 @@ services:
       DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://localstack:4566
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       # No RUN_MIGRATIONS here — only the backend should run migrations.
     depends_on:
       postgres:
@@ -89,6 +91,8 @@ services:
       - "5432:5432" # host:container — lets your local uvicorn reach the DB
     volumes:
       - postgres_data:/var/lib/postgresql/data # persists data across restarts
+      # Init scripts run ONCE on a fresh volume — creates the separate `mlflow` DB.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d
     healthcheck:
       # Compose can tell when postgres is actually ready to accept connections.
       test: ["CMD-SHELL", "pg_isready -U modelforge"]
@@ -161,6 +165,33 @@ services:
       - "3000:3000" # Grafana UI at http://localhost:3000
     depends_on:
       - prometheus
+
+  # --- MLflow: experiment tracking + model registry -----------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.17.2
+    container_name: modelforge-mlflow
+    restart: unless-stopped
+    # Install the Postgres + S3 deps MLflow needs, then run the tracking server:
+    #  - backend store (run metadata) -> the separate `mlflow` Postgres database
+    #  - artifact store               -> S3 (LocalStack); server proxies uploads
+    command: >
+      bash -c "pip install --no-cache-dir psycopg2-binary boto3 &&
+      mlflow server
+      --backend-store-uri postgresql://modelforge:modelforge@postgres:5432/mlflow
+      --artifacts-destination s3://mlflow-artifacts
+      --host 0.0.0.0 --port 5000"
+    environment:
+      # Point MLflow's S3 client at LocalStack (same trick as your app's boto3).
+      MLFLOW_S3_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    ports:
+      - "5000:5000" # MLflow UI at http://localhost:5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
 
 # Named volumes so data survives `docker compose down` (but not down -v).
 volumes:

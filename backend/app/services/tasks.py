@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.dataset import Dataset
 from app.models.job import Job, JobStatus
-from app.services import storage, training
+from app.services import storage, tracking, training
 
 # Connection-level errors worth RETRYING — momentary network/endpoint/DB
 # glitches. NOTE: ClientError is deliberately NOT here anymore. A boto3
@@ -68,15 +68,6 @@ def train_model_task(self, job_id: int) -> None:
         if job is None:
             return  # job was deleted before the worker got to it
 
-        # ---- IDEMPOTENCY guard ------------------------------------------
-        # A job can be delivered MORE THAN ONCE: a retry, or acks_late
-        # redelivering after a worker died right after finishing. Re-running a
-        # finished job wastes work and overwrites good results.
-        #
-        # TODO(you): return early if the job is already done. One line:
-        #     if job.status == JobStatus.COMPLETED:
-        #         return
-
         if job.status == JobStatus.COMPLETED:
             return
 
@@ -96,6 +87,10 @@ def train_model_task(self, job_id: int) -> None:
             task_type=job.task_type,
             model_type=job.model_type,
         )
+
+        # Log this run to MLflow (params, metrics, model + registry). Best-effort:
+        # tracking.log_run swallows its own errors so it can't fail the job.
+        tracking.log_run(job, model, metrics)
 
         # Deterministic key: a re-run overwrites the SAME S3 object rather than
         # creating duplicates — another piece of idempotency.
