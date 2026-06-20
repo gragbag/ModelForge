@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import auth, datasets, jobs
+from app.api import auth, datasets, deployments, jobs
 from app.core.config import settings
 from app.services import storage
 
@@ -54,6 +54,9 @@ app.include_router(datasets.router)
 
 # Register the jobs endpoints (POST /jobs, GET /jobs/{id}).
 app.include_router(jobs.router)
+
+# Register the deployments + prediction endpoints.
+app.include_router(deployments.router)
 
 # --- Observability --------------------------------------------------------
 # Auto-instrument the app for Prometheus. This ONE call wires up a /metrics
