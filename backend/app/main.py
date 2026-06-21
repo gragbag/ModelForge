@@ -19,6 +19,7 @@ Then open:
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import auth, datasets, deployments, jobs
@@ -44,6 +45,19 @@ app = FastAPI(
     version="0.1.0",
     description="A cloud-native MLOps platform for training and serving models.",
     lifespan=lifespan,
+)
+
+# Allow the React dev server (and other local origins) to call the API from the
+# browser. Without CORS, the browser blocks cross-origin requests.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",   # Vite dev server
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Register the auth endpoints (register, login, refresh, me).
