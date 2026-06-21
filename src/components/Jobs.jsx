@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { listJobs, createJob, listDatasets } from "../api";
+import {
+  listJobs,
+  createJob,
+  listDatasets,
+  deleteJob,
+  getDatasetPreview,
+} from "../api";
+import Combobox from "./Combobox";
 
 const STATUS_COLORS = {
   queued: "bg-slate-200 text-slate-700",
@@ -13,7 +20,9 @@ export default function Jobs() {
   const [datasets, setDatasets] = useState([]);
   const [error, setError] = useState("");
   // Form state
+  const [name, setName] = useState("");
   const [datasetId, setDatasetId] = useState("");
+  const [columns, setColumns] = useState([]); // columns of the selected dataset
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
 
@@ -33,17 +42,43 @@ export default function Jobs() {
     return () => clearInterval(interval);
   }, []);
 
+  // When the selected dataset changes, fetch its columns and default the target
+  // to the LAST column (the target variable in most ML datasets).
+  useEffect(() => {
+    if (!datasetId) {
+      setColumns([]);
+      setTargetColumn("");
+      return;
+    }
+    getDatasetPreview(datasetId)
+      .then((p) => {
+        setColumns(p.columns);
+        setTargetColumn(p.columns[p.columns.length - 1] || "");
+      })
+      .catch(() => setColumns([]));
+  }, [datasetId]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     try {
       await createJob({
+        name,
         dataset_id: Number(datasetId),
         model_type: "random_forest",
         target_column: targetColumn,
         task_type: taskType,
       });
-      setTargetColumn("");
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDelete(id) {
+    setError("");
+    try {
+      await deleteJob(id);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -59,6 +94,16 @@ export default function Jobs() {
         onSubmit={handleSubmit}
         className="mb-6 flex flex-wrap items-end gap-3 rounded border bg-white p-4"
       >
+        <div>
+          <label className="block text-xs text-slate-500">Model name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            placeholder="e.g. student-pass-predictor"
+            className="rounded border px-2 py-1 text-sm"
+          />
+        </div>
         <div>
           <label className="block text-xs text-slate-500">Dataset</label>
           <select
@@ -77,12 +122,11 @@ export default function Jobs() {
         </div>
         <div>
           <label className="block text-xs text-slate-500">Target column</label>
-          <input
+          <Combobox
+            options={columns}
             value={targetColumn}
-            onChange={(e) => setTargetColumn(e.target.value)}
-            required
-            placeholder="e.g. passed"
-            className="rounded border px-2 py-1 text-sm"
+            onChange={setTargetColumn}
+            placeholder={datasetId ? "Search columns…" : "Pick a dataset first"}
           />
         </div>
         <div>
@@ -110,15 +154,17 @@ export default function Jobs() {
         <thead className="bg-slate-100 text-left text-slate-600">
           <tr>
             <th className="p-2">ID</th>
+            <th className="p-2">Name</th>
             <th className="p-2">Status</th>
             <th className="p-2">Target</th>
             <th className="p-2">Metrics</th>
+            <th className="p-2"></th>
           </tr>
         </thead>
         <tbody>
           {jobs.length === 0 ? (
             <tr>
-              <td colSpan="4" className="p-4 text-center text-slate-400">
+              <td colSpan="6" className="p-4 text-center text-slate-400">
                 No jobs yet.
               </td>
             </tr>
@@ -126,6 +172,7 @@ export default function Jobs() {
             jobs.map((j) => (
               <tr key={j.id} className="border-t">
                 <td className="p-2">{j.id}</td>
+                <td className="p-2">{j.name || "—"}</td>
                 <td className="p-2">
                   <span
                     className={`rounded px-2 py-0.5 text-xs font-medium ${
@@ -142,6 +189,14 @@ export default function Jobs() {
                         .map(([k, v]) => `${k}=${Number(v).toFixed(3)}`)
                         .join("  ")
                     : "—"}
+                </td>
+                <td className="p-2 text-right">
+                  <button
+                    onClick={() => handleDelete(j.id)}
+                    className="rounded border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))

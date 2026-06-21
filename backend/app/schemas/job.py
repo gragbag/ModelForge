@@ -22,7 +22,9 @@ from app.models.job import JobStatus, TaskType
 class JobCreate(BaseModel):
     """Request body for POST /jobs. Pydantic validates these on the way in."""
 
-    # Worked example — the dataset to train on.
+    # A human-friendly name for the resulting model (used as the registered
+    # model name in MLflow). Retraining with the same name adds a new version.
+    name: str
     dataset_id: int
     model_type: str
     target_column: str
@@ -30,21 +32,14 @@ class JobCreate(BaseModel):
     # isn't "classification" or "regression" automatically (enum validation).
     task_type: TaskType
 
-    # ------------------------------------------------------------------
-    # TODO(you): add the other two fields the user must provide:
-    #   model_type: str       # e.g. "random_forest"
-    #   target_column: str    # the column to predict
-    # (Just type annotations — Pydantic handles validation.)
-    # ------------------------------------------------------------------
-
 
 class JobRead(BaseModel):
     """Response shape for a job. Reads straight from the Job DB object."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    # Worked example — the first two fields.
     id: int
+    name: str | None
     status: JobStatus
     dataset_id: int
     model_type: str
@@ -54,14 +49,3 @@ class JobRead(BaseModel):
     model_s3_key: str | None
     error: str | None
     created_at: datetime
-
-    # ------------------------------------------------------------------
-    # TODO(you): add the remaining fields you want to expose:
-    #   dataset_id: int
-    #   model_type: str
-    #   target_column: str
-    #   metrics: dict | None
-    #   model_s3_key: str | None
-    #   error: str | None
-    #   created_at: datetime
-    # ------------------------------------------------------------------

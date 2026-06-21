@@ -54,19 +54,35 @@ export function uploadDataset(file) {
   form.append("file", file);
   return request("/datasets", { method: "POST", body: form, isForm: true });
 }
+export const deleteDataset = (id) =>
+  request(`/datasets/${id}`, { method: "DELETE" });
+export const getDatasetPreview = (id) => request(`/datasets/${id}/preview`);
 
 // --- Jobs ---
 export const listJobs = () => request("/jobs");
 export const createJob = (payload) =>
   request("/jobs", { method: "POST", body: payload });
 export const getJob = (id) => request(`/jobs/${id}`);
+export const deleteJob = (id) => request(`/jobs/${id}`, { method: "DELETE" });
 
 // --- Deployments + prediction ---
 export const listDeployments = () => request("/deployments");
+export const listModelVersions = () => request("/deployments/available-models");
 export const createDeployment = (payload) =>
   request("/deployments", { method: "POST", body: payload });
-export const predict = (deploymentId, features) =>
+export const deleteDeployment = (id) =>
+  request(`/deployments/${id}`, { method: "DELETE" });
+export const predict = (deploymentId, rows) =>
   request(`/deployments/${deploymentId}/predict`, {
     method: "POST",
-    body: { features },
+    body: { rows },
   });
+export function predictCsv(deploymentId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/deployments/${deploymentId}/predict-csv`, {
+    method: "POST",
+    body: form,
+    isForm: true,
+  });
+}

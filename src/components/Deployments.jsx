@@ -1,17 +1,27 @@
 import { useEffect, useState } from "react";
-import { listDeployments, createDeployment, predict } from "../api";
+import {
+  listDeployments,
+  createDeployment,
+  deleteDeployment,
+  listModelVersions,
+  predict,
+  predictCsv,
+} from "../api";
 
 export default function Deployments() {
   const [deployments, setDeployments] = useState([]);
+  const [versions, setVersions] = useState([]); // available registered models
   const [error, setError] = useState("");
-  // Create-deployment form
-  const [modelVersion, setModelVersion] = useState("1");
+  // Create-deployment form: index of the chosen model in `versions`
+  const [selectedIdx, setSelectedIdx] = useState(0);
   // Predict form
   const [selectedId, setSelectedId] = useState("");
+  const [mode, setMode] = useState("json"); // "json" | "csv"
   const [featuresJson, setFeaturesJson] = useState(
     '{\n  "hours_studied": 8,\n  "prev_score": 80,\n  "attendance": 95\n}'
   );
-  const [prediction, setPrediction] = useState(null);
+  // Results: { rows: [...], predictions: [...] }
+  const [result, setResult] = useState(null);
 
   async function refresh() {
     try {
@@ -23,15 +33,27 @@ export default function Deployments() {
 
   useEffect(() => {
     refresh();
+    // Load the registered model versions for the deploy dropdown.
+    listModelVersions()
+      .then((vs) => {
+        setVersions(vs);
+        setSelectedIdx(0);
+      })
+      .catch(() => {});
   }, []);
 
   async function handleCreate(e) {
     e.preventDefault();
     setError("");
+    const model = versions[selectedIdx];
+    if (!model) {
+      setError("No model selected");
+      return;
+    }
     try {
       await createDeployment({
-        model_name: "modelforge-model",
-        model_version: modelVersion,
+        model_name: model.name,
+        model_version: model.version,
       });
       await refresh();
     } catch (err) {
@@ -39,16 +61,53 @@ export default function Deployments() {
     }
   }
 
-  async function handlePredict(e) {
-    e.preventDefault();
+  async function handleDelete(id) {
     setError("");
-    setPrediction(null);
     try {
-      const features = JSON.parse(featuresJson);
-      const res = await predict(Number(selectedId), features);
-      setPrediction(res.prediction);
+      await deleteDeployment(id);
+      await refresh();
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  // Predict from the JSON box (accepts a single object OR an array of rows).
+  async function handlePredictJson(e) {
+    e.preventDefault();
+    setError("");
+    setResult(null);
+    if (!selectedId) {
+      setError("Select a deployment first");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(featuresJson);
+      const rows = Array.isArray(parsed) ? parsed : [parsed]; // single -> batch of 1
+      const res = await predict(Number(selectedId), rows);
+      setResult(res);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // Predict from an uploaded CSV (one prediction per row).
+  async function handlePredictCsv(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setError("");
+    setResult(null);
+    if (!selectedId) {
+      setError("Select a deployment first");
+      e.target.value = "";
+      return;
+    }
+    try {
+      const res = await predictCsv(Number(selectedId), file);
+      setResult(res);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      e.target.value = "";
     }
   }
 
@@ -62,19 +121,29 @@ export default function Deployments() {
         className="flex items-end gap-3 rounded border bg-white p-4"
       >
         <div>
-          <label className="block text-xs text-slate-500">
-            Model version (modelforge-model)
-          </label>
-          <input
-            value={modelVersion}
-            onChange={(e) => setModelVersion(e.target.value)}
+          <label className="block text-xs text-slate-500">Model</label>
+          <select
+            value={selectedIdx}
+            onChange={(e) => setSelectedIdx(Number(e.target.value))}
             required
             className="rounded border px-2 py-1 text-sm"
-          />
+          >
+            {versions.length === 0 ? (
+              <option value="">No models — train one first</option>
+            ) : (
+              versions.map((v, i) => (
+                <option key={`${v.name}-${v.version}`} value={i}>
+                  {v.name} (v{v.version})
+                  {v.stage && v.stage !== "None" ? ` · ${v.stage}` : ""}
+                </option>
+              ))
+            )}
+          </select>
         </div>
         <button
           type="submit"
-          className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
+          disabled={versions.length === 0}
+          className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
         >
           Deploy
         </button>
@@ -87,12 +156,13 @@ export default function Deployments() {
             <th className="p-2">ID</th>
             <th className="p-2">Model</th>
             <th className="p-2">Version</th>
+            <th className="p-2"></th>
           </tr>
         </thead>
         <tbody>
           {deployments.length === 0 ? (
             <tr>
-              <td colSpan="3" className="p-4 text-center text-slate-400">
+              <td colSpan="4" className="p-4 text-center text-slate-400">
                 No deployments yet.
               </td>
             </tr>
@@ -102,6 +172,14 @@ export default function Deployments() {
                 <td className="p-2">{d.id}</td>
                 <td className="p-2">{d.model_name}</td>
                 <td className="p-2">{d.model_version}</td>
+                <td className="p-2 text-right">
+                  <button
+                    onClick={() => handleDelete(d.id)}
+                    className="rounded border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))
           )}
@@ -109,14 +187,15 @@ export default function Deployments() {
       </table>
 
       {/* Predict */}
-      <form onSubmit={handlePredict} className="rounded border bg-white p-4">
-        <h3 className="mb-3 font-medium">Get a prediction</h3>
+      <div className="rounded border bg-white p-4">
+        <h3 className="mb-3 font-medium">Get predictions</h3>
+
+        {/* Deployment selector (shared by both modes) */}
         <div className="mb-3">
           <label className="block text-xs text-slate-500">Deployment</label>
           <select
             value={selectedId}
             onChange={(e) => setSelectedId(e.target.value)}
-            required
             className="rounded border px-2 py-1 text-sm"
           >
             <option value="">Select…</option>
@@ -127,26 +206,92 @@ export default function Deployments() {
             ))}
           </select>
         </div>
-        <label className="block text-xs text-slate-500">Features (JSON)</label>
-        <textarea
-          value={featuresJson}
-          onChange={(e) => setFeaturesJson(e.target.value)}
-          rows={5}
-          className="mb-3 w-full rounded border p-2 font-mono text-xs"
-        />
-        <button
-          type="submit"
-          className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
-        >
-          Predict
-        </button>
 
-        {prediction !== null && (
-          <div className="mt-4 rounded bg-emerald-50 p-3 text-sm">
-            Prediction: <span className="font-bold">{String(prediction)}</span>
+        {/* Input mode toggle */}
+        <div className="mb-3 flex gap-4 border-b text-sm">
+          {["json", "csv"].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`pb-2 ${
+                mode === m
+                  ? "border-b-2 border-emerald-500 font-medium text-emerald-600"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {m === "json" ? "Enter rows (JSON)" : "Upload CSV"}
+            </button>
+          ))}
+        </div>
+
+        {mode === "json" ? (
+          <form onSubmit={handlePredictJson}>
+            <p className="mb-1 text-xs text-slate-500">
+              A single row {"{...}"} or an array of rows [...]. Columns = the
+              model's features (no target).
+            </p>
+            <textarea
+              value={featuresJson}
+              onChange={(e) => setFeaturesJson(e.target.value)}
+              rows={6}
+              className="mb-3 w-full rounded border p-2 font-mono text-xs"
+            />
+            <button
+              type="submit"
+              className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
+            >
+              Predict
+            </button>
+          </form>
+        ) : (
+          <div>
+            <p className="mb-2 text-xs text-slate-500">
+              Upload a CSV of feature rows (columns = the model's features, no
+              target column). One prediction per row.
+            </p>
+            <label className="cursor-pointer rounded bg-emerald-500 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600">
+              Choose CSV
+              <input type="file" accept=".csv" onChange={handlePredictCsv} className="hidden" />
+            </label>
           </div>
         )}
-      </form>
+
+        {/* Results: each input row + its prediction */}
+        {result && result.rows.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <p className="mb-2 text-xs font-medium text-slate-500">
+              {result.predictions.length} prediction(s)
+            </p>
+            <table className="text-xs">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  {Object.keys(result.rows[0]).map((c) => (
+                    <th key={c} className="border-b px-2 py-1">
+                      {c}
+                    </th>
+                  ))}
+                  <th className="border-b px-2 py-1 text-emerald-600">prediction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows.map((row, i) => (
+                  <tr key={i}>
+                    {Object.keys(result.rows[0]).map((c) => (
+                      <td key={c} className="border-b px-2 py-1">
+                        {String(row[c])}
+                      </td>
+                    ))}
+                    <td className="border-b px-2 py-1 font-bold text-emerald-700">
+                      {String(result.predictions[i])}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
     </section>

@@ -12,9 +12,12 @@ This is the first endpoint that touches all three layers: API + S3 + database.
 """
 
 import io
+import json
+
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -85,3 +88,52 @@ def list_datasets(
 
     result = db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/{dataset_id}/preview")
+def preview_dataset(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return the column names + first 5 rows of a dataset's CSV (for the UI
+    preview). Downloads only the first few rows from S3."""
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or (
+        dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+    df = pd.read_csv(io.BytesIO(raw), nrows=5)
+    # df.to_json handles NaN -> null and numpy types -> native, so the result is
+    # always valid JSON; json.loads turns it back into Python objects to return.
+    return {
+        "columns": list(df.columns),
+        "rows": json.loads(df.to_json(orient="records")),
+    }
+
+
+@router.delete("/{dataset_id}", status_code=204)
+def delete_dataset(
+    dataset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a dataset you own (admins can delete any)."""
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or (
+        dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    db.delete(dataset)
+    try:
+        db.commit()
+    except IntegrityError:
+        # A job still references this dataset (foreign key) — block the delete.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete: this dataset has training jobs. Delete those first.",
+        )

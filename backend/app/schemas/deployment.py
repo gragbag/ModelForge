@@ -27,11 +27,14 @@ class DeploymentRead(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    """Input for a prediction: one row of feature values, e.g.
-    {"features": {"hours_studied": 6, "prev_score": 72, "attendance": 85}}"""
+    """Input for prediction: one or more rows of feature values, e.g.
+    {"rows": [{"hours_studied": 6, "prev_score": 72, "attendance": 85}, ...]}"""
 
-    features: dict[str, Any]
+    rows: list[dict[str, Any]]
 
 
 class PredictResponse(BaseModel):
-    prediction: Any
+    """The input rows paired with their predictions (same order)."""
+
+    rows: list[dict[str, Any]]
+    predictions: list[Any]
