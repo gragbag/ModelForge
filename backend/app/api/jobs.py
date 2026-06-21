@@ -12,6 +12,7 @@ GET /jobs/{id}:
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -23,6 +24,18 @@ from app.schemas.job import JobCreate, JobRead
 from app.services.tasks import train_model_task
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@router.get("", response_model=list[JobRead])
+def list_jobs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[Job]:
+    """List jobs — your own, or all if you're an admin."""
+    stmt = select(Job).order_by(Job.created_at.desc())
+    if current_user.role != Role.ADMIN:
+        stmt = stmt.where(Job.owner_id == current_user.id)
+    return list(db.execute(stmt).scalars().all())
 
 
 @router.post("", response_model=JobRead, status_code=201)
