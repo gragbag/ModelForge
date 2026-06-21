@@ -38,9 +38,11 @@ def log_run(job: Job, model, metrics: dict[str, float]) -> None:
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)
             
+            # Register under the user-given model name (falls back to the default
+            # for older jobs that have no name). Same name on a retrain -> new version.
             mlflow.sklearn.log_model(
                 model, "model",
-                registered_model_name=REGISTERED_MODEL_NAME,
+                registered_model_name=job.name or REGISTERED_MODEL_NAME,
             )
 
     except Exception as exc:  # noqa: BLE001 — tracking must never break training

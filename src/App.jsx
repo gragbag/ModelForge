@@ -1,24 +1,36 @@
-import { useState } from "react";
-import { getToken, clearToken } from "./api";
-import Login from "./components/Login";
+import { useEffect, useState } from "react";
+import { getToken, clearToken, getMe } from "./api";
+import PublicApp from "./components/PublicApp";
+import Overview from "./components/Overview";
 import Datasets from "./components/Datasets";
 import Jobs from "./components/Jobs";
 import Deployments from "./components/Deployments";
 
-const TABS = ["Datasets", "Jobs", "Deployments"];
+const TABS = ["Overview", "Datasets", "Jobs", "Deployments"];
 
 export default function App() {
   // If a token exists, we're "logged in". Login sets it; logout clears it.
   const [loggedIn, setLoggedIn] = useState(Boolean(getToken()));
-  const [tab, setTab] = useState("Datasets");
+  const [tab, setTab] = useState("Overview");
+  const [email, setEmail] = useState("");
+
+  // Fetch the current user's email for the header once logged in.
+  useEffect(() => {
+    if (loggedIn) {
+      getMe()
+        .then((u) => setEmail(u.email))
+        .catch(() => setEmail(""));
+    }
+  }, [loggedIn]);
 
   if (!loggedIn) {
-    return <Login onLogin={() => setLoggedIn(true)} />;
+    return <PublicApp onLogin={() => setLoggedIn(true)} />;
   }
 
   function logout() {
     clearToken();
     setLoggedIn(false);
+    setEmail("");
   }
 
   return (
@@ -28,12 +40,15 @@ export default function App() {
         <h1 className="text-xl font-bold">
           Model<span className="text-emerald-400">Forge</span>
         </h1>
-        <button
-          onClick={logout}
-          className="rounded bg-slate-700 px-3 py-1 text-sm hover:bg-slate-600"
-        >
-          Log out
-        </button>
+        <div className="flex items-center gap-4">
+          {email && <span className="text-sm text-slate-300">{email}</span>}
+          <button
+            onClick={logout}
+            className="rounded bg-slate-700 px-3 py-1 text-sm hover:bg-slate-600"
+          >
+            Log out
+          </button>
+        </div>
       </header>
 
       {/* Tabs */}
@@ -55,6 +70,7 @@ export default function App() {
 
       {/* Active section */}
       <main className="mx-auto max-w-4xl p-6">
+        {tab === "Overview" && <Overview />}
         {tab === "Datasets" && <Datasets />}
         {tab === "Jobs" && <Jobs />}
         {tab === "Deployments" && <Deployments />}

@@ -57,6 +57,9 @@ class Job(Base):
     dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), nullable=False)
     # The user who submitted this job (Wave 2 ownership).
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # User-given name for the model this job produces — used as the registered
+    # model name in MLflow, so deployments can pick models by a meaningful name.
+    name: Mapped[str | None] = mapped_column(nullable=True)
     model_type: Mapped[str] = mapped_column(nullable=False)
     target_column: Mapped[str] = mapped_column(nullable=False)
     # NEW (Step 6): the user-specified problem type — classification or regression.

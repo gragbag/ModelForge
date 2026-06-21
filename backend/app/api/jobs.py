@@ -59,6 +59,7 @@ def create_job(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     job = Job(
+        name=payload.name,
         dataset_id=payload.dataset_id,
         model_type=payload.model_type,
         target_column=payload.target_column,
@@ -91,3 +92,19 @@ def get_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     return job
+
+
+@router.delete("/{job_id}", status_code=204)
+def delete_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a job you own (admins can delete any)."""
+    job = db.get(Job, job_id)
+    if job is None or (
+        job.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.delete(job)
+    db.commit()

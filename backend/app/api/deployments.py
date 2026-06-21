@@ -9,10 +9,14 @@ A deployment records which MLflow model version to serve; /predict loads that
 model from the registry and runs inference on the feature values you send.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import io
+import json
+import logging
+
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-import logging
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -60,6 +64,55 @@ def list_deployments(
     return list(db.execute(stmt).scalars().all())
 
 
+@router.get("/available-models")
+def available_models(
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, str]]:
+    """List all registered model versions available to deploy (from MLflow), so
+    the UI can show meaningful names instead of asking the user to type one."""
+    return serving.list_model_versions()
+
+
+@router.delete("/{deployment_id}", status_code=204)
+def delete_deployment(
+    deployment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a deployment you own (admins can delete any)."""
+    deployment = db.get(Deployment, deployment_id)
+    if deployment is None or (
+        deployment.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    db.delete(deployment)
+    db.commit()
+
+
+def _owned_deployment(deployment_id, db, current_user) -> Deployment:
+    """Fetch a deployment the user is allowed to use, or 404."""
+    deployment = db.get(Deployment, deployment_id)
+    if deployment is None or (
+        deployment.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    return deployment
+
+
+def _predict_rows(deployment: Deployment, rows: list[dict]) -> list:
+    """Load the deployment's model and predict on the given rows (shared by the
+    JSON and CSV endpoints). Turns any failure into a clean 400."""
+    try:
+        model = serving.load_model(deployment.model_name, deployment.model_version)
+        return serving.predict_batch(model, rows)
+    except Exception:
+        logger.exception("Prediction failed for deployment %s", deployment.id)
+        raise HTTPException(
+            status_code=400,
+            detail="Prediction failed — check that your columns match the model's features.",
+        )
+
+
 @router.post("/{deployment_id}/predict", response_model=PredictResponse)
 def predict(
     deployment_id: int,
@@ -67,20 +120,32 @@ def predict(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PredictResponse:
-    """Run inference: load the deployment's model and predict on the input row."""
-    deployment = db.get(Deployment, deployment_id)
-    if deployment is None or (
-        deployment.owner_id != current_user.id and current_user.role != Role.ADMIN
-    ):
-        raise HTTPException(status_code=404, detail="Deployment not found")
+    """Batch inference from JSON rows. `rows` is a list of feature dicts."""
+    deployment = _owned_deployment(deployment_id, db, current_user)
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    predictions = _predict_rows(deployment, payload.rows)
+    return PredictResponse(rows=payload.rows, predictions=predictions)
+
+
+@router.post("/{deployment_id}/predict-csv", response_model=PredictResponse)
+def predict_csv(
+    deployment_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PredictResponse:
+    """Batch inference from an uploaded CSV. Each row is one prediction."""
+    deployment = _owned_deployment(deployment_id, db, current_user)
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are supported")
 
     try:
-        model = serving.load_model(deployment.model_name, deployment.model_version)
-        print(model)
+        df = pd.read_csv(io.BytesIO(file.file.read()))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
 
-        prediction = serving.predict_one(model, payload.features)
-    except Exception:
-        logger.exception("Prediction failed for deployment %s", deployment_id)  # full detail in logs
-        raise HTTPException(status_code=400, detail="Prediction failed — check your feature values")
-
-    return PredictResponse(prediction=prediction)
+    # to_json handles NaN/numpy types cleanly; round-trip to plain Python rows.
+    rows = json.loads(df.to_json(orient="records"))
+    predictions = _predict_rows(deployment, rows)
+    return PredictResponse(rows=rows, predictions=predictions)
