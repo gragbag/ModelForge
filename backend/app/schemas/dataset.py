@@ -29,27 +29,10 @@ class DatasetRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    # Worked example — the first two fields.
     id: int
     filename: str
-
     s3_key: str
     size_bytes: int
     row_count: int
     column_count: int
     created_at: datetime
-
-    # ------------------------------------------------------------------
-    # TODO(you): add the remaining fields you want the API to return.
-    # These mirror the columns on the Dataset model that are safe/useful to
-    # expose:
-    #
-    #   s3_key: str
-    #   size_bytes: int
-    #   row_count: int
-    #   column_count: int
-    #   created_at: datetime
-    #
-    # (Type annotations only — Pydantic figures out the rest. No
-    #  mapped_column() here; that's only for the DB model.)
-    # ------------------------------------------------------------------

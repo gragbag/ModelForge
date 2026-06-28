@@ -22,8 +22,15 @@ from app.models.job import Job
 from app.models.user import Role, User
 from app.schemas.job import JobCreate, JobRead
 from app.services.tasks import train_model_task
+from app.services.training import MODEL_TYPES, model_specs
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@router.get("/model-types")
+def model_types(current_user: User = Depends(get_current_user)) -> list[dict]:
+    """Every model + its tunable hyperparameters (drives the UI form)."""
+    return model_specs()
 
 
 @router.get("", response_model=list[JobRead])
@@ -58,12 +65,18 @@ def create_job(
     ):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    # Reject unknown model types up front (clearer than a worker failure).
+    if payload.model_type not in MODEL_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown model_type: {payload.model_type}")
+
     job = Job(
         name=payload.name,
         dataset_id=payload.dataset_id,
         model_type=payload.model_type,
         target_column=payload.target_column,
         task_type=payload.task_type,
+        scale_features=payload.scale_features,
+        hyperparameters=payload.hyperparameters,
         owner_id=current_user.id,
     )
     db.add(job)

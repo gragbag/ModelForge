@@ -5,6 +5,7 @@ import {
   listDatasets,
   deleteJob,
   getDatasetPreview,
+  listModelTypes,
 } from "../api";
 import Combobox from "./Combobox";
 
@@ -19,12 +20,19 @@ export default function Jobs() {
   const [jobs, setJobs] = useState([]);
   const [datasets, setDatasets] = useState([]);
   const [error, setError] = useState("");
+  const [models, setModels] = useState([]); // [{ name, params: [...] }]
   // Form state
   const [name, setName] = useState("");
   const [datasetId, setDatasetId] = useState("");
   const [columns, setColumns] = useState([]); // columns of the selected dataset
   const [targetColumn, setTargetColumn] = useState("");
   const [taskType, setTaskType] = useState("classification");
+  const [modelType, setModelType] = useState("random_forest");
+  const [scaleFeatures, setScaleFeatures] = useState(false);
+  const [hyperparams, setHyperparams] = useState({}); // { paramName: value }
+
+  // The params (hyperparameter specs) of the currently-selected model.
+  const currentParams = models.find((m) => m.name === modelType)?.params || [];
 
   async function refresh() {
     try {
@@ -37,10 +45,23 @@ export default function Jobs() {
   useEffect(() => {
     refresh();
     listDatasets().then(setDatasets).catch(() => {});
+    listModelTypes().then(setModels).catch(() => {});
     // Poll every 3s so QUEUED → RUNNING → COMPLETED updates live.
     const interval = setInterval(refresh, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  // When the model changes (or specs load), reset hyperparameters to its defaults.
+  useEffect(() => {
+    const spec = models.find((m) => m.name === modelType);
+    if (spec) {
+      const defaults = {};
+      spec.params.forEach((p) => {
+        defaults[p.name] = p.default;
+      });
+      setHyperparams(defaults);
+    }
+  }, [modelType, models]);
 
   // When the selected dataset changes, fetch its columns and default the target
   // to the LAST column (the target variable in most ML datasets).
@@ -65,9 +86,11 @@ export default function Jobs() {
       await createJob({
         name,
         dataset_id: Number(datasetId),
-        model_type: "random_forest",
+        model_type: modelType,
         target_column: targetColumn,
         task_type: taskType,
+        scale_features: scaleFeatures,
+        hyperparameters: hyperparams,
       });
       await refresh();
     } catch (err) {
@@ -140,6 +163,61 @@ export default function Jobs() {
             <option value="regression">regression</option>
           </select>
         </div>
+        <div>
+          <label className="block text-xs text-slate-500">Model</label>
+          <select
+            value={modelType}
+            onChange={(e) => setModelType(e.target.value)}
+            className="rounded border px-2 py-1 text-sm"
+          >
+            {models.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Dynamic hyperparameter inputs for the selected model */}
+        {currentParams.map((p) => (
+          <div key={p.name}>
+            <label className="block text-xs text-slate-500">{p.label}</label>
+            {p.type === "select" ? (
+              <select
+                value={hyperparams[p.name] ?? p.default}
+                onChange={(e) =>
+                  setHyperparams({ ...hyperparams, [p.name]: e.target.value })
+                }
+                className="rounded border px-2 py-1 text-sm"
+              >
+                {p.options.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                step={p.type === "float" ? "0.01" : "1"}
+                value={hyperparams[p.name] ?? p.default}
+                onChange={(e) =>
+                  setHyperparams({ ...hyperparams, [p.name]: e.target.value })
+                }
+                className="w-24 rounded border px-2 py-1 text-sm"
+              />
+            )}
+          </div>
+        ))}
+
+        <label className="flex items-center gap-1 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={scaleFeatures}
+            onChange={(e) => setScaleFeatures(e.target.checked)}
+          />
+          Scale features
+        </label>
         <button
           type="submit"
           className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
@@ -155,6 +233,7 @@ export default function Jobs() {
           <tr>
             <th className="p-2">ID</th>
             <th className="p-2">Name</th>
+            <th className="p-2">Model</th>
             <th className="p-2">Status</th>
             <th className="p-2">Target</th>
             <th className="p-2">Metrics</th>
@@ -164,7 +243,7 @@ export default function Jobs() {
         <tbody>
           {jobs.length === 0 ? (
             <tr>
-              <td colSpan="6" className="p-4 text-center text-slate-400">
+              <td colSpan="7" className="p-4 text-center text-slate-400">
                 No jobs yet.
               </td>
             </tr>
@@ -173,6 +252,10 @@ export default function Jobs() {
               <tr key={j.id} className="border-t">
                 <td className="p-2">{j.id}</td>
                 <td className="p-2">{j.name || "—"}</td>
+                <td className="p-2 text-xs">
+                  {j.model_type}
+                  {j.scale_features ? " (scaled)" : ""}
+                </td>
                 <td className="p-2">
                   <span
                     className={`rounded px-2 py-0.5 text-xs font-medium ${

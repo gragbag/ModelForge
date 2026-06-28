@@ -36,18 +36,9 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # ------------------------------------------------------------------
-    # TODO(you): create the user with a HASHED password, save, return it.
-    #   user = User(
-    #       email=payload.email,
-    #       hashed_password=hash_password(payload.password),  # <-- never store plaintext
-    #   )
-    #   db.add(user); db.commit(); db.refresh(user)
-    #   return user
-    # ------------------------------------------------------------------
     user = User(
         email=payload.email,
-        hashed_password=hash_password(payload.password),
+        hashed_password=hash_password(payload.password),  # never store plaintext
     )
     db.add(user)
     db.commit()
@@ -60,29 +51,11 @@ def login(payload: UserCreate, db: Session = Depends(get_db)) -> TokenPair:
     """Verify credentials and issue an access + refresh token pair."""
     auth_error = HTTPException(status_code=401, detail="Incorrect email or password")
 
-    # ------------------------------------------------------------------
-    # TODO(you): authenticate and mint tokens. Steps:
-    #
-    # 1) Look up the user by email:
-    #        user = db.execute(
-    #            select(User).where(User.email == payload.email)
-    #        ).scalar_one_or_none()
-    #
-    # 2) Reject if no user OR the password doesn't match the stored hash.
-    #    (Use one generic error for both — don't reveal which was wrong.)
-    #        if user is None or not verify_password(payload.password, user.hashed_password):
-    #            raise auth_error
-    #
-    # 3) Return a token pair:
-    #        return TokenPair(
-    #            access_token=create_access_token(user.id),
-    #            refresh_token=create_refresh_token(user.id),
-    #        )
-    # ------------------------------------------------------------------
     user = db.execute(
         select(User).where(User.email == payload.email)
     ).scalar_one_or_none()
 
+    # One generic error for both cases — don't reveal which was wrong.
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise auth_error
 
