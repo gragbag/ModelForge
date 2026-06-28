@@ -21,7 +21,7 @@ The status uses a Python Enum so the allowed values are explicit and typo-proof.
 import enum
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -62,27 +62,17 @@ class Job(Base):
     name: Mapped[str | None] = mapped_column(nullable=True)
     model_type: Mapped[str] = mapped_column(nullable=False)
     target_column: Mapped[str] = mapped_column(nullable=False)
+    # Whether to standardize features (StandardScaler) before training.
+    scale_features: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    # User-set model hyperparameters (e.g. {"n_neighbors": 7}); empty = defaults.
+    hyperparameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # NEW (Step 6): the user-specified problem type — classification or regression.
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType), nullable=False)
-    metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    model_s3_key: Mapped[str | None] = mapped_column(nullable=True)
-    error: Mapped[str | None] = mapped_column(nullable=True)
-
-    # ------------------------------------------------------------------
-    # TODO(you): add the columns a job needs. From the spec (Phase 3/4):
-    #
-    #   dataset_id     -> FK to datasets.id   (see the ForeignKey hint above)
-    #   model_type     -> e.g. "random_forest"            (Mapped[str])
-    #   target_column  -> the column to predict           (Mapped[str])
-    #   metrics        -> results, JSON, nullable         (Mapped[dict | None], JSON)
-    #   model_s3_key   -> where the trained model was saved, nullable
-    #                                                      (Mapped[str | None])
-    #   error          -> error message if it failed, nullable
-    #                                                      (Mapped[str | None])
-    #
-    # Write them below.
-    # ------------------------------------------------------------------
-
+    metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # results, once trained
+    model_s3_key: Mapped[str | None] = mapped_column(nullable=True)  # where the artifact is saved
+    error: Mapped[str | None] = mapped_column(nullable=True)  # failure reason, if any
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

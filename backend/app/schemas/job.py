@@ -31,6 +31,10 @@ class JobCreate(BaseModel):
     # The user declares the problem type. Pydantic will reject anything that
     # isn't "classification" or "regression" automatically (enum validation).
     task_type: TaskType
+    # Optionally standardize features before training (StandardScaler).
+    scale_features: bool = False
+    # Model hyperparameters (e.g. {"n_neighbors": 7}); empty = model defaults.
+    hyperparameters: dict = {}
 
 
 class JobRead(BaseModel):
@@ -45,6 +49,7 @@ class JobRead(BaseModel):
     model_type: str
     target_column: str
     task_type: TaskType
+    scale_features: bool
     metrics: dict | None
     model_s3_key: str | None
     error: str | None

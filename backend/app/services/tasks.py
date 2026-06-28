@@ -37,10 +37,6 @@ def _is_transient_client_error(exc: ClientError) -> bool:
       - 5xx  -> the SERVER had a problem  -> transient, worth retrying
       - 4xx  -> OUR request was bad (e.g. 404 file-not-found, 403 forbidden)
                 -> permanent, retrying can't help
-
-    TODO(you): return True only for 5xx status codes. The HTTP status lives at:
-        exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
-    Return whether that status is >= 500.
     """
     status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
     return status >= 500
@@ -86,6 +82,8 @@ def train_model_task(self, job_id: int) -> None:
             target_column=job.target_column,
             task_type=job.task_type,
             model_type=job.model_type,
+            hyperparameters=job.hyperparameters,
+            scale_features=job.scale_features,
         )
 
         # Log this run to MLflow (params, metrics, model + registry). Best-effort:
@@ -120,13 +118,9 @@ def train_model_task(self, job_id: int) -> None:
             _mark_failed(db, job, f"Failed after {self.request.retries} retries: {exc}")
             raise
 
-        # TODO(you): trigger the retry. Celery re-queues the job and re-runs it
-        # after `countdown` seconds. Exponential backoff = 2 ** attempt, so the
-        # waits grow 2s, 4s, 8s as retries climb:
-        #     raise self.retry(exc=exc, countdown=2 ** self.request.retries)
-        #
-        # (self.retry raises a special exception Celery catches to reschedule —
-        #  so it doesn't fall through to the handler below.)
+        # Retry with exponential backoff (waits grow 1s, 2s, 4s as retries climb).
+        # self.retry raises a special exception Celery catches to reschedule, so
+        # it doesn't fall through to the handler below.
         raise self.retry(exc=exc, countdown=2 ** self.request.retries)
 
     except Exception as exc:

@@ -73,15 +73,9 @@ app.include_router(jobs.router)
 app.include_router(deployments.router)
 
 # --- Observability --------------------------------------------------------
-# Auto-instrument the app for Prometheus. This ONE call wires up a /metrics
-# endpoint that reports request counts, latency histograms, and status codes —
-# which Prometheus scrapes and Grafana graphs.
-#
-# TODO(you): activate the instrumentator. It's a single fluent call:
-#     Instrumentator().instrument(app).expose(app)
-#   - .instrument(app) -> measures every request
-#   - .expose(app)     -> publishes the numbers at GET /metrics
-# Write that one line below.
+# Auto-instrument the app for Prometheus: this wires up a /metrics endpoint that
+# reports request counts, latency histograms, and status codes — which
+# Prometheus scrapes and Grafana graphs.
 Instrumentator().instrument(app).expose(app)
 
 

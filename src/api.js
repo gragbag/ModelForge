@@ -60,6 +60,7 @@ export const getDatasetPreview = (id) => request(`/datasets/${id}/preview`);
 
 // --- Jobs ---
 export const listJobs = () => request("/jobs");
+export const listModelTypes = () => request("/jobs/model-types");
 export const createJob = (payload) =>
   request("/jobs", { method: "POST", body: payload });
 export const getJob = (id) => request(`/jobs/${id}`);
