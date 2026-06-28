@@ -34,7 +34,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Header */}
       <header className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white">
         <h1 className="text-xl font-bold">
@@ -52,15 +52,15 @@ export default function App() {
       </header>
 
       {/* Tabs */}
-      <nav className="flex gap-1 border-b bg-white px-6">
+      <nav className="flex gap-1 border-b bg-slate-800 px-6">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-3 text-sm font-medium ${
               tab === t
-                ? "border-b-2 border-emerald-500 text-emerald-600"
-                : "text-slate-500 hover:text-slate-800"
+                ? "border-b-2 border-emerald-500 text-emerald-400"
+                : "text-slate-400 hover:text-slate-100"
             }`}
           >
             {t}
