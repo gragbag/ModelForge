@@ -40,20 +40,20 @@ export default function Combobox({ options, value, onChange, placeholder }) {
           setOpen(true);
         }}
         placeholder={placeholder}
-        className="w-44 rounded border px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+        className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-slate-100 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
       />
       {open && (
-        <ul className="absolute z-10 mt-1 max-h-48 w-44 overflow-auto rounded border bg-white text-sm shadow">
+        <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-slate-600 bg-slate-800 text-sm shadow-lg">
           {filtered.length === 0 ? (
-            <li className="px-2 py-1 text-slate-400">No matches</li>
+            <li className="px-3 py-2 text-slate-400">No matches</li>
           ) : (
             filtered.map((o) => (
               <li key={o}>
                 <button
                   type="button"
                   onClick={() => select(o)}
-                  className={`block w-full px-2 py-1 text-left hover:bg-emerald-50 ${
-                    o === value ? "bg-emerald-100 font-medium" : ""
+                  className={`block w-full px-3 py-2 text-left transition hover:bg-slate-700 ${
+                    o === value ? "bg-emerald-500/20 font-medium text-emerald-300" : ""
                   }`}
                 >
                   {o}

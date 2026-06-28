@@ -7,7 +7,7 @@ export default function PublicApp({ onLogin }) {
   const [view, setView] = useState("home"); // "home" | "login" | "register"
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Top navbar */}
       <header className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white">
         <button
@@ -52,10 +52,10 @@ function Home({ onGetStarted }) {
   return (
     <main className="mx-auto max-w-4xl px-6 py-20">
       <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">
+        <h1 className="text-4xl font-bold tracking-tight text-slate-100 sm:text-5xl">
           Train, track, and serve ML models.
         </h1>
-        <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-600">
+        <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-300">
           ModelForge is a cloud-native MLOps platform — upload a dataset, train a
           model in the background, and deploy it as a live prediction endpoint.
         </p>
@@ -87,9 +87,9 @@ function Home({ onGetStarted }) {
 
 function FeatureCard({ title, desc }) {
   return (
-    <div className="rounded-lg border bg-white p-5 shadow-sm">
-      <h3 className="font-semibold text-emerald-600">{title}</h3>
-      <p className="mt-2 text-sm text-slate-600">{desc}</p>
+    <div className="rounded-xl border border-slate-700 bg-slate-800 p-6 transition hover:border-slate-600">
+      <h3 className="font-semibold text-emerald-400">{title}</h3>
+      <p className="mt-2 text-sm text-slate-300">{desc}</p>
     </div>
   );
 }

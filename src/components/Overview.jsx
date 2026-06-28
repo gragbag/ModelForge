@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listDatasets, listJobs, listDeployments } from "../api";
+import { headingClass } from "../ui";
 
 export default function Overview() {
   const [stats, setStats] = useState(null);
@@ -19,7 +20,7 @@ export default function Overview() {
       .catch((err) => setError(err.message));
   }, []);
 
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (error) return <p className="text-sm text-red-400">{error}</p>;
   if (!stats) return <p className="text-sm text-slate-400">Loading…</p>;
 
   const cards = [
@@ -31,12 +32,17 @@ export default function Overview() {
 
   return (
     <section>
-      <h2 className="mb-4 text-lg font-semibold">Overview</h2>
+      <h2 className={headingClass}>Overview</h2>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
-          <div key={c.label} className="rounded-lg border bg-white p-5 shadow-sm">
-            <p className="text-3xl font-bold text-emerald-600">{c.value}</p>
-            <p className="mt-1 text-sm text-slate-500">{c.label}</p>
+          <div
+            key={c.label}
+            className="rounded-xl border border-slate-700 bg-slate-800 p-5 transition hover:border-slate-600"
+          >
+            <p className="text-4xl font-bold text-emerald-400">{c.value}</p>
+            <p className="mt-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+              {c.label}
+            </p>
           </div>
         ))}
       </div>

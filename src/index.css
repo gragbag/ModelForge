@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+/* --- Dark theme defaults -------------------------------------------------
+   Set centrally so individual components don't each have to opt in. The page
+   background, form controls, and default border color all go dark here; the
+   components only override the few surfaces that need a specific shade. */
+@layer base {
+  body {
+    background-color: #020617; /* slate-950 */
+    color: #f1f5f9; /* slate-100 */
+  }
+
+  /* Default border color for the `border` utility on dark surfaces. */
+  *,
+  ::before,
+  ::after {
+    border-color: #334155; /* slate-700 */
+  }
+
+  /* Dark form controls (inputs, selects, textareas). */
+  input,
+  select,
+  textarea {
+    background-color: #334155; /* slate-700 */
+    border-color: #475569; /* slate-600 */
+    color: #f1f5f9; /* slate-100 */
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: #64748b; /* slate-500 */
+  }
+  input[type="checkbox"] {
+    accent-color: #10b981; /* emerald-500 */
+  }
+}

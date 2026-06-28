@@ -7,6 +7,19 @@ import {
   predict,
   predictCsv,
 } from "../api";
+import {
+  btnDanger,
+  btnPrimary,
+  cardClass,
+  inputClass,
+  labelClass,
+  rowClass,
+  tableClass,
+  tableWrap,
+  tdClass,
+  theadClass,
+  thClass,
+} from "../ui";
 
 export default function Deployments() {
   const [deployments, setDeployments] = useState([]);
@@ -116,17 +129,14 @@ export default function Deployments() {
       <h2 className="text-lg font-semibold">Deployments</h2>
 
       {/* Create a deployment */}
-      <form
-        onSubmit={handleCreate}
-        className="flex items-end gap-3 rounded border bg-white p-4"
-      >
-        <div>
-          <label className="block text-xs text-slate-500">Model</label>
+      <form onSubmit={handleCreate} className={`flex items-end gap-3 ${cardClass}`}>
+        <div className="flex-1">
+          <label className={labelClass}>Model</label>
           <select
             value={selectedIdx}
             onChange={(e) => setSelectedIdx(Number(e.target.value))}
             required
-            className="rounded border px-2 py-1 text-sm"
+            className={inputClass}
           >
             {versions.length === 0 ? (
               <option value="">No models — train one first</option>
@@ -140,63 +150,58 @@ export default function Deployments() {
             )}
           </select>
         </div>
-        <button
-          type="submit"
-          disabled={versions.length === 0}
-          className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
-        >
+        <button type="submit" disabled={versions.length === 0} className={btnPrimary}>
           Deploy
         </button>
       </form>
 
       {/* Deployment list */}
-      <table className="w-full overflow-hidden rounded border bg-white text-sm">
-        <thead className="bg-slate-100 text-left text-slate-600">
-          <tr>
-            <th className="p-2">ID</th>
-            <th className="p-2">Model</th>
-            <th className="p-2">Version</th>
-            <th className="p-2"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {deployments.length === 0 ? (
+      <div className={tableWrap}>
+        <table className={tableClass}>
+          <thead className={theadClass}>
             <tr>
-              <td colSpan="4" className="p-4 text-center text-slate-400">
-                No deployments yet.
-              </td>
+              <th className={thClass}>ID</th>
+              <th className={thClass}>Model</th>
+              <th className={thClass}>Version</th>
+              <th className={thClass}></th>
             </tr>
-          ) : (
-            deployments.map((d) => (
-              <tr key={d.id} className="border-t">
-                <td className="p-2">{d.id}</td>
-                <td className="p-2">{d.model_name}</td>
-                <td className="p-2">{d.model_version}</td>
-                <td className="p-2 text-right">
-                  <button
-                    onClick={() => handleDelete(d.id)}
-                    className="rounded border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
+          </thead>
+          <tbody>
+            {deployments.length === 0 ? (
+              <tr>
+                <td colSpan="4" className="px-4 py-10 text-center text-slate-400">
+                  No deployments yet.
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              deployments.map((d) => (
+                <tr key={d.id} className={rowClass}>
+                  <td className={`${tdClass} text-slate-400`}>{d.id}</td>
+                  <td className={`${tdClass} font-medium`}>{d.model_name}</td>
+                  <td className={`${tdClass} text-slate-300`}>{d.model_version}</td>
+                  <td className={`${tdClass} text-right`}>
+                    <button onClick={() => handleDelete(d.id)} className={btnDanger}>
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Predict */}
-      <div className="rounded border bg-white p-4">
-        <h3 className="mb-3 font-medium">Get predictions</h3>
+      <div className={cardClass}>
+        <h3 className="mb-4 font-semibold">Get predictions</h3>
 
         {/* Deployment selector (shared by both modes) */}
-        <div className="mb-3">
-          <label className="block text-xs text-slate-500">Deployment</label>
+        <div className="mb-4">
+          <label className={labelClass}>Deployment</label>
           <select
             value={selectedId}
             onChange={(e) => setSelectedId(e.target.value)}
-            className="rounded border px-2 py-1 text-sm"
+            className={inputClass}
           >
             <option value="">Select…</option>
             {deployments.map((d) => (
@@ -208,16 +213,16 @@ export default function Deployments() {
         </div>
 
         {/* Input mode toggle */}
-        <div className="mb-3 flex gap-4 border-b text-sm">
+        <div className="mb-4 flex gap-4 border-b border-slate-700 text-sm">
           {["json", "csv"].map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`pb-2 ${
+              className={`pb-2 transition ${
                 mode === m
-                  ? "border-b-2 border-emerald-500 font-medium text-emerald-600"
-                  : "text-slate-500 hover:text-slate-800"
+                  ? "border-b-2 border-emerald-500 font-medium text-emerald-400"
+                  : "text-slate-400 hover:text-slate-100"
               }`}
             >
               {m === "json" ? "Enter rows (JSON)" : "Upload CSV"}
@@ -227,7 +232,7 @@ export default function Deployments() {
 
         {mode === "json" ? (
           <form onSubmit={handlePredictJson}>
-            <p className="mb-1 text-xs text-slate-500">
+            <p className="mb-2 text-xs text-slate-400">
               A single row {"{...}"} or an array of rows [...]. Columns = the
               model's features (no target).
             </p>
@@ -235,22 +240,19 @@ export default function Deployments() {
               value={featuresJson}
               onChange={(e) => setFeaturesJson(e.target.value)}
               rows={6}
-              className="mb-3 w-full rounded border p-2 font-mono text-xs"
+              className={`mb-3 font-mono ${inputClass}`}
             />
-            <button
-              type="submit"
-              className="rounded bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600"
-            >
+            <button type="submit" className={btnPrimary}>
               Predict
             </button>
           </form>
         ) : (
           <div>
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="mb-2 text-xs text-slate-400">
               Upload a CSV of feature rows (columns = the model's features, no
               target column). One prediction per row.
             </p>
-            <label className="cursor-pointer rounded bg-emerald-500 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600">
+            <label className={`cursor-pointer ${btnPrimary}`}>
               Choose CSV
               <input type="file" accept=".csv" onChange={handlePredictCsv} className="hidden" />
             </label>
@@ -259,30 +261,38 @@ export default function Deployments() {
 
         {/* Results: each input row + its prediction */}
         {result && result.rows.length > 0 && (
-          <div className="mt-4 overflow-x-auto">
-            <p className="mb-2 text-xs font-medium text-slate-500">
+          <div className="mt-5 overflow-x-auto">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
               {result.predictions.length} prediction(s)
             </p>
             <table className="text-xs">
               <thead>
-                <tr className="text-left text-slate-500">
+                <tr className="text-left text-slate-400">
                   {Object.keys(result.rows[0]).map((c) => (
-                    <th key={c} className="border-b px-2 py-1">
+                    <th
+                      key={c}
+                      className="border-b border-slate-700 px-3 py-1.5 font-medium"
+                    >
                       {c}
                     </th>
                   ))}
-                  <th className="border-b px-2 py-1 text-emerald-600">prediction</th>
+                  <th className="border-b border-slate-700 px-3 py-1.5 font-medium text-emerald-400">
+                    prediction
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {result.rows.map((row, i) => (
                   <tr key={i}>
                     {Object.keys(result.rows[0]).map((c) => (
-                      <td key={c} className="border-b px-2 py-1">
+                      <td
+                        key={c}
+                        className="border-b border-slate-800 px-3 py-1.5 text-slate-300"
+                      >
                         {String(row[c])}
                       </td>
                     ))}
-                    <td className="border-b px-2 py-1 font-bold text-emerald-700">
+                    <td className="border-b border-slate-800 px-3 py-1.5 font-bold text-emerald-400">
                       {String(result.predictions[i])}
                     </td>
                   </tr>
@@ -293,7 +303,7 @@ export default function Deployments() {
         )}
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-400">{error}</p>}
     </section>
   );
 }
