@@ -23,6 +23,7 @@ class DeploymentRead(BaseModel):
     id: int
     model_name: str
     model_version: str
+    modality: str
     created_at: datetime
 
 

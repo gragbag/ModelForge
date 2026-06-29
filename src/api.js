@@ -60,7 +60,8 @@ export const getDatasetPreview = (id) => request(`/datasets/${id}/preview`);
 
 // --- Jobs ---
 export const listJobs = () => request("/jobs");
-export const listModelTypes = () => request("/jobs/model-types");
+export const listModelTypes = (modality = "tabular") =>
+  request(`/jobs/model-types?modality=${modality}`);
 export const createJob = (payload) =>
   request("/jobs", { method: "POST", body: payload });
 export const getJob = (id) => request(`/jobs/${id}`);
@@ -82,6 +83,15 @@ export function predictCsv(deploymentId, file) {
   const form = new FormData();
   form.append("file", file);
   return request(`/deployments/${deploymentId}/predict-csv`, {
+    method: "POST",
+    body: form,
+    isForm: true,
+  });
+}
+export function predictImage(deploymentId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/deployments/${deploymentId}/predict-image`, {
     method: "POST",
     body: form,
     isForm: true,

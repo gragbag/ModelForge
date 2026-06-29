@@ -41,9 +41,17 @@ def create_deployment(
     current_user: User = Depends(get_current_user),
 ) -> Deployment:
     """Deploy a registered model version (records it; serves it at /predict)."""
+    # Detect the model's modality once, so the UI knows whether to offer the
+    # tabular (rows/CSV) or image (upload) prediction interface.
+    modality = (
+        "image"
+        if serving.is_image_model(payload.model_name, payload.model_version)
+        else "tabular"
+    )
     deployment = Deployment(
         model_name=payload.model_name,
         model_version=payload.model_version,
+        modality=modality,
         owner_id=current_user.id,
     )
     db.add(deployment)

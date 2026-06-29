@@ -56,6 +56,12 @@ const MODEL_META = {
     family: "Neural",
     desc: "Feedforward neural network.",
   },
+  cnn: {
+    label: "CNN",
+    family: "Neural",
+    desc: "Convolutional network — the model for image data.",
+    recommended: true,
+  },
 };
 
 export default function Jobs() {
@@ -74,6 +80,12 @@ export default function Jobs() {
   const [scaleFeatures, setScaleFeatures] = useState(false);
   const [hyperparams, setHyperparams] = useState({}); // { paramName: value }
   const [modelQuery, setModelQuery] = useState(""); // filters the model cards
+
+  // The modality of the chosen dataset drives the whole form (which models,
+  // whether a target column / task / scaling apply).
+  const selectedDataset = datasets.find((d) => d.id === Number(datasetId));
+  const modality = selectedDataset?.modality ?? "tabular";
+  const isImage = modality === "image";
 
   // The params (hyperparameter specs) of the currently-selected model.
   const currentParams = models.find((m) => m.name === modelType)?.params || [];
@@ -98,11 +110,21 @@ export default function Jobs() {
   useEffect(() => {
     refresh();
     listDatasets().then(setDatasets).catch(() => {});
-    listModelTypes().then(setModels).catch(() => {});
     // Poll every 3s so QUEUED → RUNNING → COMPLETED updates live.
     const interval = setInterval(refresh, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  // Load the models for the selected dataset's modality (tabular models vs the
+  // image CNN), and default the selection to the first one.
+  useEffect(() => {
+    listModelTypes(modality)
+      .then((m) => {
+        setModels(m);
+        setModelType(m[0]?.name ?? "");
+      })
+      .catch(() => {});
+  }, [modality]);
 
   // When the model changes (or specs load), reset hyperparameters to its defaults.
   useEffect(() => {
@@ -119,32 +141,44 @@ export default function Jobs() {
   // When the selected dataset changes, fetch its columns and default the target
   // to the LAST column (the target variable in most ML datasets).
   useEffect(() => {
-    if (!datasetId) {
+    // Image datasets have no columns/target — skip the preview fetch for them.
+    if (!datasetId || isImage) {
       setColumns([]);
       setTargetColumn("");
       return;
     }
     getDatasetPreview(datasetId)
       .then((p) => {
-        setColumns(p.columns);
-        setTargetColumn(p.columns[p.columns.length - 1] || "");
+        setColumns(p.columns || []);
+        setTargetColumn(p.columns?.[p.columns.length - 1] || "");
       })
       .catch(() => setColumns([]));
-  }, [datasetId]);
+  }, [datasetId, isImage]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     try {
-      await createJob({
-        name,
-        dataset_id: Number(datasetId),
-        model_type: modelType,
-        target_column: targetColumn,
-        task_type: taskType,
-        scale_features: scaleFeatures,
-        hyperparameters: hyperparams,
-      });
+      // Image jobs have no target column/scaling and are always classification;
+      // tabular jobs carry the full set of fields.
+      const payload = isImage
+        ? {
+            name,
+            dataset_id: Number(datasetId),
+            model_type: modelType,
+            task_type: "classification",
+            hyperparameters: hyperparams,
+          }
+        : {
+            name,
+            dataset_id: Number(datasetId),
+            model_type: modelType,
+            target_column: targetColumn,
+            task_type: taskType,
+            scale_features: scaleFeatures,
+            hyperparameters: hyperparams,
+          };
+      await createJob(payload);
       await refresh();
       setView("models"); // jump to the list so the user watches it train
     } catch (err) {
@@ -232,64 +266,73 @@ export default function Jobs() {
             >
               <option value="">Select a dataset…</option>
               {datasets
-                .filter((d) => d.status === "ready" && d.modality === "tabular")
+                .filter((d) => d.status === "ready")
                 .map((d) => (
                   <option key={d.id} value={d.id}>
-                    #{d.id} {d.filename}
+                    #{d.id} {d.filename} ({d.modality})
                   </option>
                 ))}
             </select>
           </div>
 
-          <div>
-            <label className={labelClass}>Target column</label>
-            <Combobox
-              options={columns}
-              value={targetColumn}
-              onChange={setTargetColumn}
-              placeholder={datasetId ? "Search columns…" : "Pick a dataset first"}
-            />
-          </div>
+          {/* Target column + task only apply to tabular datasets. */}
+          {!isImage && (
+            <>
+              <div>
+                <label className={labelClass}>Target column</label>
+                <Combobox
+                  options={columns}
+                  value={targetColumn}
+                  onChange={setTargetColumn}
+                  placeholder={
+                    datasetId ? "Search columns…" : "Pick a dataset first"
+                  }
+                />
+              </div>
 
-          <div>
-            <label className={labelClass}>Task</label>
-            <select
-              value={taskType}
-              onChange={(e) => setTaskType(e.target.value)}
-              className={inputClass}
-            >
-              <option value="classification">classification</option>
-              <option value="regression">regression</option>
-            </select>
-          </div>
+              <div>
+                <label className={labelClass}>Task</label>
+                <select
+                  value={taskType}
+                  onChange={(e) => setTaskType(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="classification">classification</option>
+                  <option value="regression">regression</option>
+                </select>
+              </div>
+            </>
+          )}
 
           {/* Model picker — the centerpiece of the form */}
           <div>
             <label className={labelClass}>Model</label>
-            {/* Search box: filters the cards by name as you type */}
-            <div className="relative mb-3">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={2}
-                stroke="currentColor"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m21 21-4.3-4.3m0 0A7.5 7.5 0 1 0 5.6 5.6a7.5 7.5 0 0 0 10.6 10.6Z"
+            {/* Search box — only worth showing when there are several models */}
+            {models.length > 4 && (
+              <div className="relative mb-3">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="m21 21-4.3-4.3m0 0A7.5 7.5 0 1 0 5.6 5.6a7.5 7.5 0 0 0 10.6 10.6Z"
+                  />
+                </svg>
+                <input
+                  type="text"
+                  value={modelQuery}
+                  onChange={(e) => setModelQuery(e.target.value)}
+                  placeholder="Search models…"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 py-2 pl-9 pr-3 text-sm text-slate-100 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
                 />
-              </svg>
-              <input
-                type="text"
-                value={modelQuery}
-                onChange={(e) => setModelQuery(e.target.value)}
-                placeholder="Search models…"
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 py-2 pl-9 pr-3 text-sm text-slate-100 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               {filteredModels.map((m) => {
                 const meta = MODEL_META[m.name] || {
@@ -380,24 +423,26 @@ export default function Jobs() {
             </div>
           )}
 
-          {/* Feature scaling toggle */}
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-            <input
-              type="checkbox"
-              checked={scaleFeatures}
-              onChange={(e) => setScaleFeatures(e.target.checked)}
-              className="mt-0.5 h-4 w-4"
-            />
-            <span>
-              <span className="text-sm font-medium text-slate-200">
-                Scale features
+          {/* Feature scaling toggle — tabular only */}
+          {!isImage && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+              <input
+                type="checkbox"
+                checked={scaleFeatures}
+                onChange={(e) => setScaleFeatures(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <span>
+                <span className="text-sm font-medium text-slate-200">
+                  Scale features
+                </span>
+                <span className="block text-xs text-slate-400">
+                  Standardize inputs before training — helps SVM, KNN, MLP &
+                  linear models.
+                </span>
               </span>
-              <span className="block text-xs text-slate-400">
-                Standardize inputs before training — helps SVM, KNN, MLP & linear
-                models.
-              </span>
-            </span>
-          </label>
+            </label>
+          )}
 
           <button
             type="submit"

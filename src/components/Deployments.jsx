@@ -6,6 +6,7 @@ import {
   listModelVersions,
   predict,
   predictCsv,
+  predictImage,
 } from "../api";
 import {
   btnDanger,
@@ -35,6 +36,13 @@ export default function Deployments() {
   );
   // Results: { rows: [...], predictions: [...] }
   const [result, setResult] = useState(null);
+  // Image prediction: a preview URL + { prediction, confidence }.
+  const [imagePreview, setImagePreview] = useState("");
+  const [imageResult, setImageResult] = useState(null);
+
+  // The deployment selected in the predict panel, and whether it serves images.
+  const selectedDeployment = deployments.find((d) => d.id === Number(selectedId));
+  const isImageDeployment = selectedDeployment?.modality === "image";
 
   async function refresh() {
     try {
@@ -100,6 +108,27 @@ export default function Deployments() {
       setResult(res);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  // Classify a single uploaded image (image deployments).
+  async function handlePredictImage(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setError("");
+    setImageResult(null);
+    setImagePreview(URL.createObjectURL(file));
+    if (!selectedId) {
+      setError("Select a deployment first");
+      e.target.value = "";
+      return;
+    }
+    try {
+      setImageResult(await predictImage(Number(selectedId), file));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      e.target.value = "";
     }
   }
 
@@ -206,100 +235,144 @@ export default function Deployments() {
             <option value="">Select…</option>
             {deployments.map((d) => (
               <option key={d.id} value={d.id}>
-                #{d.id} {d.model_name} v{d.model_version}
+                #{d.id} {d.model_name} v{d.model_version} ({d.modality})
               </option>
             ))}
           </select>
         </div>
 
-        {/* Input mode toggle */}
-        <div className="mb-4 flex gap-4 border-b border-slate-700 text-sm">
-          {["json", "csv"].map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`pb-2 transition ${
-                mode === m
-                  ? "border-b-2 border-emerald-500 font-medium text-emerald-400"
-                  : "text-slate-400 hover:text-slate-100"
-              }`}
-            >
-              {m === "json" ? "Enter rows (JSON)" : "Upload CSV"}
-            </button>
-          ))}
-        </div>
-
-        {mode === "json" ? (
-          <form onSubmit={handlePredictJson}>
-            <p className="mb-2 text-xs text-slate-400">
-              A single row {"{...}"} or an array of rows [...]. Columns = the
-              model's features (no target).
-            </p>
-            <textarea
-              value={featuresJson}
-              onChange={(e) => setFeaturesJson(e.target.value)}
-              rows={6}
-              className={`mb-3 font-mono ${inputClass}`}
-            />
-            <button type="submit" className={btnPrimary}>
-              Predict
-            </button>
-          </form>
-        ) : (
+        {isImageDeployment ? (
+          /* ---- Image prediction: upload an image, see the class ---- */
           <div>
             <p className="mb-2 text-xs text-slate-400">
-              Upload a CSV of feature rows (columns = the model's features, no
-              target column). One prediction per row.
+              Upload an image to classify with this model.
             </p>
             <label className={`cursor-pointer ${btnPrimary}`}>
-              Choose CSV
-              <input type="file" accept=".csv" onChange={handlePredictCsv} className="hidden" />
+              Choose image
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handlePredictImage}
+                className="hidden"
+              />
             </label>
+            {imagePreview && (
+              <div className="mt-4 flex items-center gap-4">
+                <img
+                  src={imagePreview}
+                  alt="uploaded"
+                  className="h-24 w-24 rounded-lg border border-slate-700 object-cover"
+                />
+                {imageResult && (
+                  <div>
+                    <p className="text-xl font-semibold text-emerald-400">
+                      {imageResult.prediction}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {(imageResult.confidence * 100).toFixed(1)}% confidence
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        ) : (
+          <>
+            {/* Input mode toggle */}
+            <div className="mb-4 flex gap-4 border-b border-slate-700 text-sm">
+              {["json", "csv"].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`pb-2 transition ${
+                    mode === m
+                      ? "border-b-2 border-emerald-500 font-medium text-emerald-400"
+                      : "text-slate-400 hover:text-slate-100"
+                  }`}
+                >
+                  {m === "json" ? "Enter rows (JSON)" : "Upload CSV"}
+                </button>
+              ))}
+            </div>
 
-        {/* Results: each input row + its prediction */}
-        {result && result.rows.length > 0 && (
-          <div className="mt-5 overflow-x-auto">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-              {result.predictions.length} prediction(s)
-            </p>
-            <table className="text-xs">
-              <thead>
-                <tr className="text-left text-slate-400">
-                  {Object.keys(result.rows[0]).map((c) => (
-                    <th
-                      key={c}
-                      className="border-b border-slate-700 px-3 py-1.5 font-medium"
-                    >
-                      {c}
-                    </th>
-                  ))}
-                  <th className="border-b border-slate-700 px-3 py-1.5 font-medium text-emerald-400">
-                    prediction
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, i) => (
-                  <tr key={i}>
-                    {Object.keys(result.rows[0]).map((c) => (
-                      <td
-                        key={c}
-                        className="border-b border-slate-800 px-3 py-1.5 text-slate-300"
-                      >
-                        {String(row[c])}
-                      </td>
+            {mode === "json" ? (
+              <form onSubmit={handlePredictJson}>
+                <p className="mb-2 text-xs text-slate-400">
+                  A single row {"{...}"} or an array of rows [...]. Columns = the
+                  model's features (no target).
+                </p>
+                <textarea
+                  value={featuresJson}
+                  onChange={(e) => setFeaturesJson(e.target.value)}
+                  rows={6}
+                  className={`mb-3 font-mono ${inputClass}`}
+                />
+                <button type="submit" className={btnPrimary}>
+                  Predict
+                </button>
+              </form>
+            ) : (
+              <div>
+                <p className="mb-2 text-xs text-slate-400">
+                  Upload a CSV of feature rows (columns = the model's features, no
+                  target column). One prediction per row.
+                </p>
+                <label className={`cursor-pointer ${btnPrimary}`}>
+                  Choose CSV
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handlePredictCsv}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Results: each input row + its prediction */}
+            {result && result.rows.length > 0 && (
+              <div className="mt-5 overflow-x-auto">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                  {result.predictions.length} prediction(s)
+                </p>
+                <table className="text-xs">
+                  <thead>
+                    <tr className="text-left text-slate-400">
+                      {Object.keys(result.rows[0]).map((c) => (
+                        <th
+                          key={c}
+                          className="border-b border-slate-700 px-3 py-1.5 font-medium"
+                        >
+                          {c}
+                        </th>
+                      ))}
+                      <th className="border-b border-slate-700 px-3 py-1.5 font-medium text-emerald-400">
+                        prediction
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.rows.map((row, i) => (
+                      <tr key={i}>
+                        {Object.keys(result.rows[0]).map((c) => (
+                          <td
+                            key={c}
+                            className="border-b border-slate-800 px-3 py-1.5 text-slate-300"
+                          >
+                            {String(row[c])}
+                          </td>
+                        ))}
+                        <td className="border-b border-slate-800 px-3 py-1.5 font-bold text-emerald-400">
+                          {String(result.predictions[i])}
+                        </td>
+                      </tr>
                     ))}
-                    <td className="border-b border-slate-800 px-3 py-1.5 font-bold text-emerald-400">
-                      {String(result.predictions[i])}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </div>
 
