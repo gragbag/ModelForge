@@ -15,6 +15,7 @@ import io
 import json
 
 import pandas as pd
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -58,21 +59,26 @@ def upload_dataset(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
 
-    s3_key = f"uploads/{file.filename}"
-    storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, s3_key)
-
+    # Insert the row first so Postgres assigns the auto-increment id, then key
+    # the S3 object by that id — unique per dataset, and consistent with the
+    # models/{job.id}/... convention. flush() gets the id without committing; if
+    # the upload then fails, the transaction rolls back (no orphan row).
     dataset = Dataset(
         filename=file.filename,
-        s3_key=s3_key,
+        s3_key="",  # set below, once we have the id
         size_bytes=len(raw_bytes),
         row_count=row_count,
         column_count=column_count,
         owner_id=current_user.id,
     )
-    db.add(dataset)       # stage the insert
-    db.commit()           # actually write to Postgres
-    db.refresh(dataset)   # reload so dataset.id / created_at are populated
+    db.add(dataset)
+    db.flush()  # assigns dataset.id
 
+    dataset.s3_key = f"uploads/{dataset.id}/{file.filename}"
+    storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, dataset.s3_key)
+
+    db.commit()
+    db.refresh(dataset)   # reload so created_at is populated
     return dataset
 
 
@@ -104,7 +110,19 @@ def preview_dataset(
     ):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+    try:
+        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+    except ClientError as exc:
+        # The metadata row exists but the file is gone from object storage
+        # (e.g. LocalStack was reset). Return a clear 410 instead of a 500.
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NoSuchBucket"):
+            raise HTTPException(
+                status_code=410,
+                detail="Dataset file is no longer available (object storage was "
+                "reset). Please re-upload this dataset.",
+            )
+        raise
     df = pd.read_csv(io.BytesIO(raw), nrows=5)
     # df.to_json handles NaN -> null and numpy types -> native, so the result is
     # always valid JSON; json.loads turns it back into Python objects to return.

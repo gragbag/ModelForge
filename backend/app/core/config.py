@@ -31,12 +31,13 @@ class Settings(BaseSettings):
     # --- Redis (Celery broker) --------------------------------------------
     redis_url: str = "redis://localhost:6379/0"
 
-    # --- Object storage (S3 / LocalStack) ---------------------------------
-    # When this endpoint is set, boto3 talks to LocalStack instead of real AWS.
-    s3_endpoint_url: str | None = "http://localhost:4566"
+    # --- Object storage (S3 / MinIO) --------------------------------------
+    # When this endpoint is set, boto3 talks to MinIO locally. Unset it in
+    # production so boto3 uses real AWS S3 (same code, no other changes).
+    s3_endpoint_url: str | None = "http://localhost:9000"
     s3_region: str = "us-east-1"
-    aws_access_key_id: str = "test"        # LocalStack accepts any credentials
-    aws_secret_access_key: str = "test"
+    aws_access_key_id: str = "minioadmin"      # MinIO root creds (local dev)
+    aws_secret_access_key: str = "minioadmin"
     s3_bucket_datasets: str = "datasets"
     s3_bucket_models: str = "models"
     s3_bucket_mlflow: str = "mlflow-artifacts"   # where MLflow stores artifacts

@@ -4,7 +4,7 @@
 # This brings up the SUPPORTING services your backend talks to:
 #   - postgres    : the database (stores datasets, jobs, etc.)
 #   - redis       : the queue Celery uses to hand jobs to the worker (Step 5)
-#   - localstack  : a fake AWS S3 running locally, so you never touch real AWS
+#   - minio       : S3-compatible object storage running locally (no real AWS)
 #
 # Run everything with:
 #     docker compose up -d        # -d = detached (runs in the background)
@@ -18,7 +18,7 @@
 #
 # Note: the backend and worker share ONE image (built from backend/Dockerfile);
 # they differ only in the command they run. Inside the Docker network they reach
-# each other by SERVICE NAME (postgres, redis, localstack) — not localhost —
+# each other by SERVICE NAME (postgres, redis, minio) — not localhost —
 # which is why the env vars below use those names.
 # ============================================================================
 
@@ -35,7 +35,7 @@ services:
       # vars override the defaults in app/core/config.py.
       DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
       REDIS_URL: redis://redis:6379/0
-      S3_ENDPOINT_URL: http://localstack:4566
+      S3_ENDPOINT_URL: http://minio:9000
       MLFLOW_TRACKING_URI: http://mlflow:5000
       RUN_MIGRATIONS: "true" # backend runs migrations on startup (entrypoint.sh)
     ports:
@@ -47,7 +47,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      localstack:
+      minio:
         condition: service_healthy
 
   # --- Celery worker (same image, different command) ----------------------
@@ -62,7 +62,7 @@ services:
     environment:
       DATABASE_URL: postgresql://modelforge:modelforge@postgres:5432/modelforge
       REDIS_URL: redis://redis:6379/0
-      S3_ENDPOINT_URL: http://localstack:4566
+      S3_ENDPOINT_URL: http://minio:9000
       MLFLOW_TRACKING_URI: http://mlflow:5000
       # No RUN_MIGRATIONS here — only the backend should run migrations.
     depends_on:
@@ -70,7 +70,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      localstack:
+      minio:
         condition: service_healthy
       backend:
         condition: service_started # start after backend (which runs migrations)
@@ -113,23 +113,24 @@ services:
       timeout: 3s
       retries: 5
 
-  # --- LocalStack: a local stand-in for AWS S3 ----------------------------
-  localstack:
-    image: localstack/localstack:3
-    container_name: modelforge-localstack
+  # --- MinIO: S3-compatible object storage (persists reliably to disk) -----
+  minio:
+    image: minio/minio:latest
+    container_name: modelforge-minio
     restart: unless-stopped
+    # `server /data` serves the S3 API and stores objects under /data (the
+    # mounted volume); the console is a small web UI for browsing buckets.
+    command: server /data --console-address ":9001"
     environment:
-      - SERVICES=s3 # we only need S3 for now
-      - DEBUG=0
-      - PERSISTENCE=1 # keep S3 data (buckets/objects) across restarts
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "4566:4566" # the single LocalStack edge port (matches s3_endpoint_url)
+      - "9000:9000" # S3 API (matches s3_endpoint_url)
+      - "9001:9001" # web console at http://localhost:9001
     volumes:
-      # Persist LocalStack's state to a named volume, so buckets survive a
-      # restart — same idea as the postgres_data volume below.
-      - localstack_data:/var/lib/localstack
+      - minio_data:/data # objects persist here across restarts (the whole point)
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:4566/_localstack/health | grep -q '\"s3\": \"available\"' || curl -s http://localhost:4566/_localstack/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -182,20 +183,20 @@ services:
       --host 0.0.0.0 --port 5000"
     environment:
       # Point MLflow's S3 client at LocalStack (same trick as your app's boto3).
-      MLFLOW_S3_ENDPOINT_URL: http://localstack:4566
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
     ports:
       - "5000:5000" # MLflow UI at http://localhost:5000
     depends_on:
       postgres:
         condition: service_healthy
-      localstack:
+      minio:
         condition: service_healthy
 
 # Named volumes so data survives `docker compose down` (but not down -v).
 volumes:
   postgres_data:
-  localstack_data:
+  minio_data:
   prometheus_data:
   grafana_data:
