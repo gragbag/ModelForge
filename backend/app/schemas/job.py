@@ -27,7 +27,8 @@ class JobCreate(BaseModel):
     name: str
     dataset_id: int
     model_type: str
-    target_column: str
+    # Tabular jobs require this; image jobs label by folder, so it's optional.
+    target_column: str | None = None
     # The user declares the problem type. Pydantic will reject anything that
     # isn't "classification" or "regression" automatically (enum validation).
     task_type: TaskType
@@ -47,7 +48,7 @@ class JobRead(BaseModel):
     status: JobStatus
     dataset_id: int
     model_type: str
-    target_column: str
+    target_column: str | None
     task_type: TaskType
     scale_features: bool
     metrics: dict | None

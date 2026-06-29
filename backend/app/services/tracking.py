@@ -24,8 +24,15 @@ EXPERIMENT_NAME = "modelforge"
 REGISTERED_MODEL_NAME = "modelforge-model"
 
 
-def log_run(job: Job, model, metrics: dict[str, float]) -> None:
-    """Log one training run to MLflow and register the resulting model."""
+def log_run(
+    job: Job, model, metrics: dict[str, float], flavor: str = "sklearn"
+) -> None:
+    """Log one training run to MLflow and register the resulting model.
+
+    `flavor` selects how the model is serialized: "sklearn" (tabular) or
+    "pytorch" (image). The pytorch flavor is imported lazily so the API process
+    — which never trains — doesn't need torch.
+    """
     try:
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
         mlflow.set_experiment(EXPERIMENT_NAME)
@@ -37,13 +44,20 @@ def log_run(job: Job, model, metrics: dict[str, float]) -> None:
 
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)
-            
+
             # Register under the user-given model name (falls back to the default
-            # for older jobs that have no name). Same name on a retrain -> new version.
-            mlflow.sklearn.log_model(
-                model, "model",
-                registered_model_name=job.name or REGISTERED_MODEL_NAME,
-            )
+            # for older jobs with no name). Same name on a retrain -> new version.
+            registered_name = job.name or REGISTERED_MODEL_NAME
+            if flavor == "pytorch":
+                from mlflow import pytorch as mlflow_pytorch
+
+                mlflow_pytorch.log_model(
+                    model, "model", registered_model_name=registered_name
+                )
+            else:
+                mlflow.sklearn.log_model(
+                    model, "model", registered_model_name=registered_name
+                )
 
     except Exception as exc:  # noqa: BLE001 — tracking must never break training
         logger.warning("MLflow logging failed for job %s: %s", job.id, exc)

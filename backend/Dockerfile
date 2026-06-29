@@ -24,7 +24,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 # requirements.txt is unchanged, this expensive install layer is reused even
 # when your app code changes. (That's why we copy it before the code.)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install CPU-only PyTorch first from PyTorch's CPU index — the default PyPI
+# wheels are CUDA builds (multi-GB). With torch already satisfied, the
+# requirements install below skips it and pulls everything else from PyPI.
+RUN pip install --no-cache-dir torch torchvision \
+        --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir -r requirements.txt
 
 
 # ---- Stage 2: final -- the actual runtime image ----------------------------

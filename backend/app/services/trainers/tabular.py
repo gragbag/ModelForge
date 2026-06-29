@@ -20,6 +20,9 @@ class TabularTrainer(Trainer):
     modality = MODALITY_TABULAR
 
     def run(self, job: Job, dataset: Dataset) -> TrainOutcome:
+        if job.target_column is None:
+            raise ValueError("Tabular training requires a target_column")
+
         # Load the CSV from object storage into a DataFrame.
         raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
         df = pd.read_csv(io.BytesIO(raw))

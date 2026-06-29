@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.dataset import Dataset
+from app.models.dataset import MODALITY_IMAGE, Dataset
 from app.models.job import Job
 from app.models.user import Role, User
 from app.schemas.job import JobCreate, JobRead
+from app.services.image_specs import IMAGE_MODEL_TYPES, image_model_specs
 from app.services.tasks import train_model_task
 from app.services.training import MODEL_TYPES, model_specs
 
@@ -28,9 +29,12 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.get("/model-types")
-def model_types(current_user: User = Depends(get_current_user)) -> list[dict]:
-    """Every model + its tunable hyperparameters (drives the UI form)."""
-    return model_specs()
+def model_types(
+    modality: str = "tabular",
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Models + tunable hyperparameters for a modality (drives the UI form)."""
+    return image_model_specs() if modality == MODALITY_IMAGE else model_specs()
 
 
 @router.get("", response_model=list[JobRead])
@@ -65,9 +69,22 @@ def create_job(
     ):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Reject unknown model types up front (clearer than a worker failure).
-    if payload.model_type not in MODEL_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unknown model_type: {payload.model_type}")
+    # Validate against the model types valid for this dataset's modality, and
+    # require a target column for tabular jobs (image jobs label by folder).
+    if dataset.modality == MODALITY_IMAGE:
+        valid_models = IMAGE_MODEL_TYPES
+    else:
+        valid_models = MODEL_TYPES
+        if not payload.target_column:
+            raise HTTPException(
+                status_code=400, detail="target_column is required for tabular jobs"
+            )
+    if payload.model_type not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model_type {payload.model_type!r} for "
+            f"{dataset.modality} datasets",
+        )
 
     job = Job(
         name=payload.name,

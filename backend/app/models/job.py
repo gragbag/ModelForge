@@ -61,7 +61,8 @@ class Job(Base):
     # model name in MLflow, so deployments can pick models by a meaningful name.
     name: Mapped[str | None] = mapped_column(nullable=True)
     model_type: Mapped[str] = mapped_column(nullable=False)
-    target_column: Mapped[str] = mapped_column(nullable=False)
+    # The column to predict — tabular only; image jobs label by folder, so null.
+    target_column: Mapped[str | None] = mapped_column(nullable=True)
     # Whether to standardize features (StandardScaler) before training.
     scale_features: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
