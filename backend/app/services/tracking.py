@@ -25,13 +25,18 @@ REGISTERED_MODEL_NAME = "modelforge-model"
 
 
 def log_run(
-    job: Job, model, metrics: dict[str, float], flavor: str = "sklearn"
+    job: Job,
+    model,
+    metrics: dict[str, float],
+    flavor: str = "sklearn",
+    extra_params: dict[str, str] | None = None,
 ) -> None:
     """Log one training run to MLflow and register the resulting model.
 
     `flavor` selects how the model is serialized: "sklearn" (tabular) or
     "pytorch" (image). The pytorch flavor is imported lazily so the API process
-    — which never trains — doesn't need torch.
+    — which never trains — doesn't need torch. `extra_params` records modality-
+    specific info (e.g. image classes + size) so serving can rebuild inference.
     """
     try:
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
@@ -41,6 +46,8 @@ def log_run(
             mlflow.log_param("model_type", job.model_type)
             mlflow.log_param("target_column", job.target_column)
             mlflow.log_param("task_type", job.task_type.value)
+            for key, param_value in (extra_params or {}).items():
+                mlflow.log_param(key, param_value)
 
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)

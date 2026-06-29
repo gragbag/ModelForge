@@ -149,3 +149,33 @@ def predict_csv(
     rows = json.loads(df.to_json(orient="records"))
     predictions = _predict_rows(deployment, rows)
     return PredictResponse(rows=rows, predictions=predictions)
+
+
+@router.post("/{deployment_id}/predict-image")
+def predict_image(
+    deployment_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Classify a single uploaded image with an image (CNN) deployment.
+    Returns the predicted class + confidence."""
+    deployment = _owned_deployment(deployment_id, db, current_user)
+
+    if not serving.is_image_model(deployment.model_name, deployment.model_version):
+        raise HTTPException(
+            status_code=400, detail="This deployment does not serve an image model"
+        )
+    if not file.filename or not file.filename.lower().endswith(
+        (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp")
+    ):
+        raise HTTPException(status_code=400, detail="Please upload an image file")
+
+    data = file.file.read()
+    try:
+        return serving.predict_images(
+            deployment.model_name, deployment.model_version, [data]
+        )[0]
+    except Exception:
+        logger.exception("Image prediction failed for deployment %s", deployment.id)
+        raise HTTPException(status_code=400, detail="Prediction failed on this image")

@@ -95,8 +95,19 @@ class ImageTrainer(Trainer):
 
             metrics = _evaluate(model, val_dl, loss_fn)
 
-            # Track the run in MLflow (pytorch flavor); best-effort.
-            tracking.log_run(job, model, metrics, flavor="pytorch")
+            # Track the run in MLflow (pytorch flavor); record the classes + image
+            # size so serving can preprocess + label predictions. Best-effort.
+            tracking.log_run(
+                job,
+                model,
+                metrics,
+                flavor="pytorch",
+                extra_params={
+                    "modality": MODALITY_IMAGE,
+                    "classes": ",".join(ds.classes),
+                    "img_size": str(img_size),
+                },
+            )
 
             # Save the model + everything serving needs to rebuild + predict.
             model_key = f"models/{job.id}/model.pt"
