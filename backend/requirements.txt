@@ -31,6 +31,9 @@ scikit-learn>=1.5           # the ML models (random forest, etc.) + metrics
 pandas>=2.2                 # reads the CSV into a dataframe
 joblib>=1.4                 # serializes the trained model to a file artifact
 
+# --- Images ----------------------------------------------------------------
+pillow>=10                  # validate/decode uploaded images (image datasets)
+
 # --- Observability ---------------------------------------------------------
 prometheus-fastapi-instrumentator>=7.0  # exposes /metrics for Prometheus
 

@@ -1,14 +1,14 @@
 """
-Dataset endpoints: upload a CSV and list datasets.
+Dataset endpoints: upload a dataset and list datasets.
 
-Flow for POST /datasets:
-    1. Receive the uploaded file
-    2. Parse it with pandas -> row_count, column_count
-    3. Upload the raw bytes to S3 (LocalStack)
-    4. Insert a row into the `datasets` table
-    5. Return the created dataset (as a DatasetRead schema)
+A dataset is either:
+  - tabular: a .csv  -> parsed with pandas (row_count / column_count)
+  - image:   a .zip  -> images in a folder-per-class layout (cats/…, dogs/…),
+             where the folder name is the label (the torchvision ImageFolder
+             convention). We record the classes + image count.
 
-This is the first endpoint that touches all three layers: API + S3 + database.
+Flow for POST /datasets: receive the file -> inspect it -> upload to S3 ->
+insert a row -> return it. Touches all three layers: API + S3 + database.
 """
 
 import io
@@ -24,10 +24,17 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.dataset import Dataset
+from app.models.dataset import (
+    MODALITY_IMAGE,
+    MODALITY_TABULAR,
+    STATUS_READY,
+    STATUS_VALIDATING,
+    Dataset,
+)
 from app.models.user import Role, User
 from app.schemas.dataset import DatasetRead
-from app.services import storage
+from app.services import image_data, storage
+from app.services.tasks import validate_dataset_task
 
 # A router groups related endpoints. We include it into the app in main.py.
 # `prefix="/datasets"` means every route here starts with /datasets.
@@ -41,23 +48,45 @@ def upload_dataset(
     current_user: User = Depends(get_current_user),  # <-- requires a valid token
 ) -> Dataset:
     """
-    Upload a CSV. `file: UploadFile` is how FastAPI receives an uploaded file.
+    Upload a dataset: a `.csv` (tabular) or a `.zip` of images (folder-per-class).
     `db: Session = Depends(get_db)` injects a database session for this request.
     """
-    # Basic validation — only accept CSVs for now.
-    if not file.filename or not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only .csv files are supported")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
 
-    # Read the whole file into memory as bytes. (Fine for the modest CSVs we
-    # expect; a production system would stream large files.)
+    # Read the whole file into memory. (Fine for the modest files we expect; a
+    # production system would stream large uploads straight to S3.)
     raw_bytes = file.file.read()
+    name = file.filename.lower()
 
-    try:
-        df = pd.read_csv(io.BytesIO(raw_bytes))
-        row_count = df.shape[0]
-        column_count = df.shape[1]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+    # Inspect the file by type to derive modality + metadata. Tabular is parsed
+    # synchronously (cheap) and is immediately "ready". Image zips get a cheap
+    # structural check now; full per-image validation happens in a background
+    # task, so the dataset starts out "validating".
+    row_count: int | None = None
+    column_count: int | None = None
+    meta: dict | None = None
+    if name.endswith(".csv"):
+        modality = MODALITY_TABULAR
+        status = STATUS_READY
+        try:
+            df = pd.read_csv(io.BytesIO(raw_bytes))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+        row_count, column_count = df.shape[0], df.shape[1]
+    elif name.endswith(".zip"):
+        modality = MODALITY_IMAGE
+        status = STATUS_VALIDATING
+        try:
+            meta = image_data.inspect_structure(raw_bytes)  # cheap, no decoding
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .csv (tabular) or .zip (image, folder-per-class) files "
+            "are supported",
+        )
 
     # Insert the row first so Postgres assigns the auto-increment id, then key
     # the S3 object by that id — unique per dataset, and consistent with the
@@ -69,6 +98,9 @@ def upload_dataset(
         size_bytes=len(raw_bytes),
         row_count=row_count,
         column_count=column_count,
+        modality=modality,
+        meta=meta,
+        status=status,
         owner_id=current_user.id,
     )
     db.add(dataset)
@@ -79,6 +111,11 @@ def upload_dataset(
 
     db.commit()
     db.refresh(dataset)   # reload so created_at is populated
+
+    # Kick off async content validation for image datasets (validating -> ready/failed).
+    if dataset.modality == MODALITY_IMAGE:
+        validate_dataset_task.delay(dataset.id)
+
     return dataset
 
 
@@ -102,13 +139,17 @@ def preview_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Return the column names + first 5 rows of a dataset's CSV (for the UI
-    preview). Downloads only the first few rows from S3."""
+    """Preview a dataset. Tabular -> column names + first 5 rows; image -> its
+    classes + image count (from stored metadata, no download needed)."""
     dataset = db.get(Dataset, dataset_id)
     if dataset is None or (
         dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
     ):
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Image datasets: serve the metadata we recorded at upload time.
+    if dataset.modality == MODALITY_IMAGE:
+        return {"modality": MODALITY_IMAGE, **(dataset.meta or {})}
 
     try:
         raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
@@ -127,6 +168,7 @@ def preview_dataset(
     # df.to_json handles NaN -> null and numpy types -> native, so the result is
     # always valid JSON; json.loads turns it back into Python objects to return.
     return {
+        "modality": MODALITY_TABULAR,
         "columns": list(df.columns),
         "rows": json.loads(df.to_json(orient="records")),
     }

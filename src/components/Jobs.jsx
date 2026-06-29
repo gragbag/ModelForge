@@ -231,11 +231,13 @@ export default function Jobs() {
               className={inputClass}
             >
               <option value="">Select a dataset…</option>
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>
-                  #{d.id} {d.filename}
-                </option>
-              ))}
+              {datasets
+                .filter((d) => d.status === "ready" && d.modality === "tabular")
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    #{d.id} {d.filename}
+                  </option>
+                ))}
             </select>
           </div>
 

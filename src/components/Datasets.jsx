@@ -16,6 +16,12 @@ import {
   thClass,
 } from "../ui";
 
+const STATUS_COLORS = {
+  validating: "bg-blue-500/20 text-blue-300",
+  ready: "bg-emerald-500/20 text-emerald-300",
+  failed: "bg-red-500/20 text-red-300",
+};
+
 export default function Datasets() {
   const [datasets, setDatasets] = useState([]);
   const [error, setError] = useState("");
@@ -33,6 +39,9 @@ export default function Datasets() {
 
   useEffect(() => {
     refresh();
+    // Poll so an image dataset's status (validating → ready/failed) updates live.
+    const interval = setInterval(refresh, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   async function handleUpload(e) {
@@ -83,8 +92,13 @@ export default function Datasets() {
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Datasets</h2>
         <label className={`cursor-pointer ${btnPrimary}`}>
-          {busy ? "Uploading…" : "Upload CSV"}
-          <input type="file" accept=".csv" onChange={handleUpload} className="hidden" />
+          {busy ? "Uploading…" : "Upload dataset"}
+          <input
+            type="file"
+            accept=".csv,.zip"
+            onChange={handleUpload}
+            className="hidden"
+          />
         </label>
       </div>
 
@@ -97,16 +111,17 @@ export default function Datasets() {
               <th className={`${thClass} w-8`}></th>
               <th className={thClass}>ID</th>
               <th className={thClass}>Filename</th>
-              <th className={thClass}>Rows</th>
-              <th className={thClass}>Columns</th>
+              <th className={thClass}>Type</th>
+              <th className={thClass}>Details</th>
+              <th className={thClass}>Status</th>
               <th className={thClass}></th>
             </tr>
           </thead>
           <tbody>
             {datasets.length === 0 ? (
               <tr>
-                <td colSpan="6" className="px-4 py-10 text-center text-slate-400">
-                  No datasets yet — upload a CSV to get started.
+                <td colSpan="7" className="px-4 py-10 text-center text-slate-400">
+                  No datasets yet — upload a CSV or image zip to get started.
                 </td>
               </tr>
             ) : (
@@ -143,8 +158,30 @@ function DatasetRow({ dataset: d, isOpen, preview, onToggle, onDelete }) {
         </td>
         <td className={`${tdClass} text-slate-400`}>{d.id}</td>
         <td className={`${tdClass} font-medium`}>{d.filename}</td>
-        <td className={`${tdClass} text-slate-300`}>{d.row_count}</td>
-        <td className={`${tdClass} text-slate-300`}>{d.column_count}</td>
+        <td className={tdClass}>
+          <span className="rounded bg-slate-700 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-300">
+            {d.modality}
+          </span>
+        </td>
+        <td className={`${tdClass} text-slate-300`}>
+          {d.modality === "image"
+            ? d.meta
+              ? `${d.meta.num_images} imgs · ${d.meta.num_classes} classes`
+              : "—"
+            : d.row_count != null
+              ? `${d.row_count} × ${d.column_count}`
+              : "—"}
+        </td>
+        <td className={tdClass}>
+          <span
+            title={d.error || ""}
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              STATUS_COLORS[d.status] || ""
+            }`}
+          >
+            {d.status}
+          </span>
+        </td>
         <td className={`${tdClass} text-right`}>
           <button onClick={onDelete} className={btnDanger}>
             Delete
@@ -154,9 +191,22 @@ function DatasetRow({ dataset: d, isOpen, preview, onToggle, onDelete }) {
 
       {isOpen && (
         <tr className="bg-slate-950">
-          <td colSpan="6" className="px-4 py-4">
+          <td colSpan="7" className="px-4 py-4">
             {!preview ? (
               <p className="text-xs text-slate-400">Loading preview…</p>
+            ) : d.modality === "image" ? (
+              <div className="text-xs text-slate-300">
+                <p className="mb-2 font-medium uppercase tracking-wide text-slate-400">
+                  {preview.num_images} images · {preview.num_classes} classes
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {(preview.classes || []).map((c) => (
+                    <span key={c} className="rounded bg-slate-700 px-2 py-0.5">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
