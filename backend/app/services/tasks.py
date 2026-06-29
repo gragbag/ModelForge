@@ -88,7 +88,14 @@ def train_model_task(self, job_id: int) -> None:
         # image/text trainers plug in here). The trainer owns the whole
         # modality-specific pipeline: load data, train, log, and persist.
         trainer = get_trainer(dataset.modality)
-        outcome = trainer.run(job, dataset)
+
+        # Live progress: epoch-based trainers call this each epoch; we persist it
+        # to the job row so the frontend's polling picks it up.
+        def report_progress(progress: dict) -> None:
+            job.progress = progress
+            db.commit()
+
+        outcome = trainer.run(job, dataset, progress_cb=report_progress)
 
         job.model_s3_key = outcome.model_s3_key
         job.metrics = outcome.metrics

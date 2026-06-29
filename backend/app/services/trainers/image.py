@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.models.dataset import MODALITY_IMAGE, Dataset
 from app.models.job import Job
 from app.services import image_models, image_specs, storage, tracking
-from app.services.trainers.base import Trainer, TrainOutcome
+from app.services.trainers.base import ProgressCallback, Trainer, TrainOutcome
 
 _SEED = 42
 
@@ -57,7 +57,9 @@ def _evaluate(model: nn.Module, loader: DataLoader, loss_fn: nn.Module) -> dict[
 class ImageTrainer(Trainer):
     modality = MODALITY_IMAGE
 
-    def run(self, job: Job, dataset: Dataset) -> TrainOutcome:
+    def run(
+        self, job: Job, dataset: Dataset, progress_cb: ProgressCallback | None = None
+    ) -> TrainOutcome:
         raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
         params = image_specs.merged_params(job.model_type, job.hyperparameters)
         img_size = int(params["img_size"])
@@ -85,15 +87,36 @@ class ImageTrainer(Trainer):
             optimizer = torch.optim.Adam(model.parameters(), lr=params["learning_rate"])
             loss_fn = nn.CrossEntropyLoss()
 
-            for _epoch in range(params["epochs"]):
+            epochs = params["epochs"]
+            history: list[dict[str, float]] = []
+            metrics: dict[str, float] = {}
+            for epoch in range(epochs):
                 model.train()
+                running_loss = seen = 0.0
                 for xb, yb in train_dl:
                     optimizer.zero_grad()
                     loss = loss_fn(model(xb), yb)
                     loss.backward()
                     optimizer.step()
+                    running_loss += loss.item() * len(yb)
+                    seen += len(yb)
 
-            metrics = _evaluate(model, val_dl, loss_fn)
+                metrics = _evaluate(model, val_dl, loss_fn)  # last epoch's = final
+                history.append(
+                    {
+                        "epoch": epoch + 1,
+                        "train_loss": round(running_loss / seen if seen else 0.0, 4),
+                        "val_accuracy": round(metrics["accuracy"], 4),
+                    }
+                )
+                if progress_cb:
+                    progress_cb(
+                        {
+                            "current_epoch": epoch + 1,
+                            "total_epochs": epochs,
+                            "history": history,
+                        }
+                    )
 
             # Track the run in MLflow (pytorch flavor); record the classes + image
             # size so serving can preprocess + label predictions. Best-effort.

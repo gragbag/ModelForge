@@ -457,12 +457,18 @@ export default function Jobs() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-300">{j.target_column}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-300">
-                      {j.metrics
-                        ? Object.entries(j.metrics)
+                    <td className="px-4 py-3 text-xs">
+                      {j.status === "running" && j.progress ? (
+                        <TrainingProgress progress={j.progress} />
+                      ) : j.metrics ? (
+                        <span className="font-mono text-slate-300">
+                          {Object.entries(j.metrics)
                             .map(([k, v]) => `${k}=${Number(v).toFixed(3)}`)
-                            .join("  ")
-                        : "—"}
+                            .join("  ")}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -480,5 +486,48 @@ export default function Jobs() {
         </div>
       )}
     </section>
+  );
+}
+
+// A tiny inline-SVG line chart (no library) — plots values left→right, scaled to
+// fit, with a dot on the latest point. Used for the per-epoch accuracy curve.
+function Sparkline({ values, width = 64, height = 18 }) {
+  if (!values || values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const x = (i) => (i / (values.length - 1)) * width;
+  const y = (v) => height - ((v - min) / range) * height;
+  const points = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  return (
+    <svg width={width} height={height} className="shrink-0">
+      <polyline points={points} fill="none" stroke="#34d399" strokeWidth="1.5" />
+      <circle cx={width} cy={y(values[values.length - 1])} r="2" fill="#34d399" />
+    </svg>
+  );
+}
+
+// Live training progress for a running epoch-based job: epoch X/Y, a progress
+// bar, the accuracy sparkline, and the latest val-accuracy.
+function TrainingProgress({ progress }) {
+  const { current_epoch, total_epochs, history = [] } = progress;
+  const accuracies = history.map((h) => h.val_accuracy).filter((v) => v != null);
+  const latest = accuracies[accuracies.length - 1];
+  const pct = total_epochs ? (current_epoch / total_epochs) * 100 : 0;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="text-slate-400">
+          Epoch {current_epoch}/{total_epochs}
+        </span>
+        <Sparkline values={accuracies} />
+        {latest != null && (
+          <span className="text-emerald-300">acc {latest.toFixed(2)}</span>
+        )}
+      </div>
+      <div className="h-1 w-28 rounded bg-slate-700">
+        <div className="h-1 rounded bg-emerald-500" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }

@@ -13,13 +13,17 @@ from app.core.config import settings
 from app.models.dataset import Dataset, MODALITY_TABULAR
 from app.models.job import Job
 from app.services import storage, tracking, training
-from app.services.trainers.base import Trainer, TrainOutcome
+from app.services.trainers.base import ProgressCallback, Trainer, TrainOutcome
 
 
 class TabularTrainer(Trainer):
     modality = MODALITY_TABULAR
 
-    def run(self, job: Job, dataset: Dataset) -> TrainOutcome:
+    def run(
+        self, job: Job, dataset: Dataset, progress_cb: ProgressCallback | None = None
+    ) -> TrainOutcome:
+        # progress_cb is unused: scikit-learn's .fit() is one opaque call with no
+        # per-epoch hook, so tabular jobs just go running -> completed.
         if job.target_column is None:
             raise ValueError("Tabular training requires a target_column")
 

@@ -52,6 +52,7 @@ class JobRead(BaseModel):
     task_type: TaskType
     scale_features: bool
     metrics: dict | None
+    progress: dict | None
     model_s3_key: str | None
     error: str | None
     created_at: datetime

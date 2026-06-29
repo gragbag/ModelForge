@@ -72,6 +72,9 @@ class Job(Base):
     # NEW (Step 6): the user-specified problem type — classification or regression.
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType), nullable=False)
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # results, once trained
+    # Live training progress for epoch-based (image) jobs: current/total epoch +
+    # per-epoch history (train_loss, val_accuracy). Null for tabular jobs.
+    progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     model_s3_key: Mapped[str | None] = mapped_column(nullable=True)  # where the artifact is saved
     error: Mapped[str | None] = mapped_column(nullable=True)  # failure reason, if any
     created_at: Mapped[datetime] = mapped_column(
