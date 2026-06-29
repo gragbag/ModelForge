@@ -35,4 +35,5 @@ class DatasetRead(BaseModel):
     size_bytes: int
     row_count: int
     column_count: int
+    modality: str
     created_at: datetime

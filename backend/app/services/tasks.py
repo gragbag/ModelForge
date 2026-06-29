@@ -10,19 +10,14 @@ Step 12 adds RELIABILITY around the training work:
 The core idea: tell TRANSIENT failures (retry) apart from PERMANENT ones (fail fast).
 """
 
-import io
-
-import joblib
-import pandas as pd
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy.exc import OperationalError
 
 from app.core.celery_app import celery_app
-from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.dataset import Dataset
 from app.models.job import Job, JobStatus
-from app.services import storage, tracking, training
+from app.services.trainers import get_trainer
 
 # Connection-level errors worth RETRYING — momentary network/endpoint/DB
 # glitches. NOTE: ClientError is deliberately NOT here anymore. A boto3
@@ -74,31 +69,14 @@ def train_model_task(self, job_id: int) -> None:
         if dataset is None:
             raise ValueError(f"Dataset {job.dataset_id} not found")
 
-        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
-        df = pd.read_csv(io.BytesIO(raw))
+        # Dispatch to the trainer for this dataset's modality (tabular today;
+        # image/text trainers plug in here). The trainer owns the whole
+        # modality-specific pipeline: load data, train, log, and persist.
+        trainer = get_trainer(dataset.modality)
+        outcome = trainer.run(job, dataset)
 
-        model, metrics = training.train_and_evaluate(
-            df=df,
-            target_column=job.target_column,
-            task_type=job.task_type,
-            model_type=job.model_type,
-            hyperparameters=job.hyperparameters,
-            scale_features=job.scale_features,
-        )
-
-        # Log this run to MLflow (params, metrics, model + registry). Best-effort:
-        # tracking.log_run swallows its own errors so it can't fail the job.
-        tracking.log_run(job, model, metrics)
-
-        # Deterministic key: a re-run overwrites the SAME S3 object rather than
-        # creating duplicates — another piece of idempotency.
-        buffer = io.BytesIO()
-        joblib.dump(model, buffer)
-        model_key = f"models/{job.id}/model.joblib"
-        storage.upload_fileobj(buffer.getvalue(), settings.s3_bucket_models, model_key)
-
-        job.model_s3_key = model_key
-        job.metrics = metrics
+        job.model_s3_key = outcome.model_s3_key
+        job.metrics = outcome.metrics
         job.status = JobStatus.COMPLETED
         db.commit()
 
