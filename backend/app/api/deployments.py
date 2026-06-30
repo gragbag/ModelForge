@@ -81,6 +81,36 @@ def available_models(
     return serving.list_model_versions()
 
 
+@router.delete("/registered-models", status_code=204)
+def delete_registered_model(
+    name: str,
+    version: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a registered model version from the MLflow registry (clears stale
+    models from the deploy list). Blocked if a deployment is still serving it."""
+    in_use = (
+        db.execute(
+            select(Deployment).where(
+                Deployment.model_name == name, Deployment.model_version == version
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if in_use is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This model is deployed — delete the deployment first.",
+        )
+    try:
+        serving.delete_model_version(name, version)
+    except Exception:
+        logger.exception("Failed to delete model %s v%s", name, version)
+        raise HTTPException(status_code=400, detail="Could not delete model")
+
+
 @router.delete("/{deployment_id}", status_code=204)
 def delete_deployment(
     deployment_id: int,

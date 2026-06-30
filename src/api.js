@@ -70,6 +70,13 @@ export const deleteJob = (id) => request(`/jobs/${id}`, { method: "DELETE" });
 // --- Deployments + prediction ---
 export const listDeployments = () => request("/deployments");
 export const listModelVersions = () => request("/deployments/available-models");
+export const deleteModelVersion = (name, version) =>
+  request(
+    `/deployments/registered-models?name=${encodeURIComponent(
+      name
+    )}&version=${encodeURIComponent(version)}`,
+    { method: "DELETE" }
+  );
 export const createDeployment = (payload) =>
   request("/deployments", { method: "POST", body: payload });
 export const deleteDeployment = (id) =>

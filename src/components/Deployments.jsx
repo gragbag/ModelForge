@@ -4,6 +4,7 @@ import {
   createDeployment,
   deleteDeployment,
   listModelVersions,
+  deleteModelVersion,
   predict,
   predictCsv,
   predictImage,
@@ -87,6 +88,26 @@ export default function Deployments() {
     try {
       await deleteDeployment(id);
       await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // Delete the currently-selected registered model from the MLflow registry.
+  async function handleDeleteModel() {
+    const model = versions[selectedIdx];
+    if (!model) return;
+    if (
+      !window.confirm(
+        `Delete ${model.name} v${model.version} from the model registry?`
+      )
+    )
+      return;
+    setError("");
+    try {
+      await deleteModelVersion(model.name, model.version);
+      setVersions(await listModelVersions());
+      setSelectedIdx(0);
     } catch (err) {
       setError(err.message);
     }
@@ -181,6 +202,15 @@ export default function Deployments() {
         </div>
         <button type="submit" disabled={versions.length === 0} className={btnPrimary}>
           Deploy
+        </button>
+        <button
+          type="button"
+          onClick={handleDeleteModel}
+          disabled={versions.length === 0}
+          title="Delete the selected model from the registry"
+          className={btnDanger}
+        >
+          Delete
         </button>
       </form>
 

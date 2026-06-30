@@ -46,6 +46,26 @@ def list_model_versions() -> list[dict[str, str]]:
         return []
 
 
+def delete_model_version(model_name: str, model_version: str) -> None:
+    """Delete a registered model version from the MLflow registry (and the whole
+    registered model if that was its last version). Evicts any cached copies."""
+    client = MlflowClient(tracking_uri=settings.mlflow_tracking_uri)
+    client.delete_model_version(model_name, model_version)
+
+    # If no versions remain, remove the now-empty registered model too (tidy-up).
+    try:
+        if not client.search_model_versions(f"name='{model_name}'"):
+            client.delete_registered_model(model_name)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        logger.warning("Could not remove empty model %s: %s", model_name, exc)
+
+    # Drop any cached loaded model / params for this version.
+    key = (model_name, model_version)
+    _model_cache.pop(key, None)
+    _torch_cache.pop(key, None)
+    _run_params_cache.pop(key, None)
+
+
 def load_model(model_name: str, model_version: str) -> Any:
     """Load a registered model version from the MLflow Model Registry (cached)."""
     key = (model_name, model_version)
