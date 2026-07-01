@@ -49,9 +49,12 @@ export const getMe = () => request("/auth/me");
 
 // --- Datasets ---
 export const listDatasets = () => request("/datasets");
-export function uploadDataset(file) {
+export function uploadDataset(file, { name, modality, description } = {}) {
   const form = new FormData();
   form.append("file", file);
+  form.append("name", name);
+  form.append("modality", modality);
+  form.append("description", description || "");
   return request("/datasets", { method: "POST", body: form, isForm: true });
 }
 export const deleteDataset = (id) =>

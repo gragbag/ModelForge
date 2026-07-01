@@ -6,7 +6,7 @@ Stores metadata about each upload; the file itself lives in S3 (see `s3_key`).
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -28,8 +28,15 @@ STATUS_FAILED = "failed"
 
 class Dataset(Base):
     __tablename__ = "datasets"
+    # A user's dataset names are unique, so they can track datasets by name
+    # instead of id. (Postgres allows multiple NULLs, so pre-name rows are fine.)
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_datasets_owner_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    # User-given display name (unique per user) + optional description. Nullable
+    # so datasets uploaded before this feature still load (UI falls back to filename).
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     filename: Mapped[str] = mapped_column(nullable=False)
     s3_key: Mapped[str] = mapped_column(nullable=False)  # where the file lives in S3
     size_bytes: Mapped[int] = mapped_column(nullable=False)

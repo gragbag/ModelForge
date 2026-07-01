@@ -269,7 +269,7 @@ export default function Jobs() {
                 .filter((d) => d.status === "ready")
                 .map((d) => (
                   <option key={d.id} value={d.id}>
-                    #{d.id} {d.filename} ({d.modality})
+                    {d.name || d.filename} ({d.modality})
                   </option>
                 ))}
             </select>
