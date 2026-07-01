@@ -127,13 +127,23 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     ),
     "mlp": ModelSpec(
         classifier=lambda p: MLPClassifier(
-            hidden_layer_sizes=_layers(p["hidden_layers"]), max_iter=p["max_iter"], random_state=_RANDOM_STATE
+            hidden_layer_sizes=_layers(p["hidden_layers"]),
+            learning_rate_init=p["learning_rate"],
+            max_iter=p["max_iter"],
+            random_state=_RANDOM_STATE,
         ),
         regressor=lambda p: MLPRegressor(
-            hidden_layer_sizes=_layers(p["hidden_layers"]), max_iter=p["max_iter"], random_state=_RANDOM_STATE
+            hidden_layer_sizes=_layers(p["hidden_layers"]),
+            learning_rate_init=p["learning_rate"],
+            max_iter=p["max_iter"],
+            random_state=_RANDOM_STATE,
         ),
         params=[
-            Param("hidden_layers", "Hidden layers", "select", "100", options=["100", "100,50", "64,32"]),
+            Param(
+                "hidden_layers", "Hidden layers", "select", "100",
+                options=["100", "100,50", "64,32", "128,64", "128,64,32"],
+            ),
+            Param("learning_rate", "Learning rate", "float", 0.001),
             Param("max_iter", "Max iterations", "int", 500),
         ],
     ),

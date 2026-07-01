@@ -31,7 +31,7 @@ celery_app = Celery(
 
 celery_app.conf.update(
     task_track_started=True,   # report a "STARTED" state while a task runs
-    task_time_limit=600,       # hard-kill a task after 10 minutes (safety net)
+    task_time_limit=1800,      # hard-kill a task after 30 min (image training is slower)
     # --- Reliability (Step 12) -------------------------------------------
     # acks_late: only acknowledge a task to the broker AFTER it finishes. So if
     # a worker DIES mid-task, the un-acked job is redelivered to another worker

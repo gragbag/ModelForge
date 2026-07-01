@@ -1,21 +1,22 @@
 """
-Dataset endpoints: upload a CSV and list datasets.
+Dataset endpoints: upload a dataset and list datasets.
 
-Flow for POST /datasets:
-    1. Receive the uploaded file
-    2. Parse it with pandas -> row_count, column_count
-    3. Upload the raw bytes to S3 (LocalStack)
-    4. Insert a row into the `datasets` table
-    5. Return the created dataset (as a DatasetRead schema)
+A dataset is either:
+  - tabular: a .csv  -> parsed with pandas (row_count / column_count)
+  - image:   a .zip  -> images in a folder-per-class layout (cats/…, dogs/…),
+             where the folder name is the label (the torchvision ImageFolder
+             convention). We record the classes + image count.
 
-This is the first endpoint that touches all three layers: API + S3 + database.
+Flow for POST /datasets: receive the file -> inspect it -> upload to S3 ->
+insert a row -> return it. Touches all three layers: API + S3 + database.
 """
 
 import io
 import json
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from botocore.exceptions import ClientError
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,56 +24,207 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.dataset import Dataset
+from app.models.dataset import (
+    MODALITY_IMAGE,
+    MODALITY_TABULAR,
+    STATUS_READY,
+    STATUS_VALIDATING,
+    Dataset,
+)
 from app.models.user import Role, User
 from app.schemas.dataset import DatasetRead
-from app.services import storage
+from app.services import image_data, storage
+from app.services.tasks import validate_dataset_task
 
 # A router groups related endpoints. We include it into the app in main.py.
 # `prefix="/datasets"` means every route here starts with /datasets.
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
+def _process_dataset_file(
+    raw_bytes: bytes, filename: str, modality: str
+) -> tuple[int | None, int | None, dict | None, str]:
+    """Validate a dataset file against its modality and derive
+    (row_count, column_count, meta, status). Raises on a bad/mismatched file."""
+    fname = filename.lower()
+    if modality == MODALITY_TABULAR:
+        if not fname.endswith(".csv"):
+            raise HTTPException(status_code=400, detail="A tabular dataset must be a .csv file")
+        try:
+            df = pd.read_csv(io.BytesIO(raw_bytes))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+        return df.shape[0], df.shape[1], None, STATUS_READY
+
+    if not fname.endswith(".zip"):
+        raise HTTPException(
+            status_code=400,
+            detail="An image dataset must be a .zip of folder-per-class images",
+        )
+    try:
+        meta = image_data.inspect_structure(raw_bytes)  # cheap, no decoding
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return None, None, meta, STATUS_VALIDATING
+
+
 @router.post("", response_model=DatasetRead, status_code=201)
 def upload_dataset(
     file: UploadFile,
+    name: str = Form(...),
+    modality: str = Form(...),
+    description: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),  # <-- requires a valid token
 ) -> Dataset:
-    """
-    Upload a CSV. `file: UploadFile` is how FastAPI receives an uploaded file.
-    `db: Session = Depends(get_db)` injects a database session for this request.
-    """
-    # Basic validation — only accept CSVs for now.
-    if not file.filename or not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only .csv files are supported")
+    """Upload a dataset. The user picks a unique `name`, the `modality`
+    (tabular/image), an optional `description`, and the matching file — a `.csv`
+    for tabular or a folder-per-class `.zip` for image."""
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A dataset name is required")
+    if modality not in (MODALITY_TABULAR, MODALITY_IMAGE):
+        raise HTTPException(status_code=400, detail="modality must be tabular or image")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
 
-    # Read the whole file into memory as bytes. (Fine for the modest CSVs we
-    # expect; a production system would stream large files.)
+    # Names are unique per user (fail early with a clear message; the DB
+    # constraint is the backstop).
+    exists = (
+        db.execute(
+            select(Dataset).where(
+                Dataset.owner_id == current_user.id, Dataset.name == name
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if exists is not None:
+        raise HTTPException(
+            status_code=409, detail=f"You already have a dataset named {name!r}"
+        )
+
+    # Read the whole file into memory. (Fine for the modest files we expect; a
+    # production system would stream large uploads straight to S3.)
     raw_bytes = file.file.read()
+    row_count, column_count, meta, status = _process_dataset_file(
+        raw_bytes, file.filename, modality
+    )
 
-    try:
-        df = pd.read_csv(io.BytesIO(raw_bytes))
-        row_count = df.shape[0]
-        column_count = df.shape[1]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
-
-    s3_key = f"uploads/{file.filename}"
-    storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, s3_key)
-
+    # Insert the row first so Postgres assigns the auto-increment id, then key
+    # the S3 object by that id — unique per dataset, and consistent with the
+    # models/{job.id}/... convention. flush() gets the id without committing; if
+    # the upload then fails, the transaction rolls back (no orphan row).
     dataset = Dataset(
+        name=name,
+        description=description.strip() or None,
         filename=file.filename,
-        s3_key=s3_key,
+        s3_key="",  # set below, once we have the id
         size_bytes=len(raw_bytes),
         row_count=row_count,
         column_count=column_count,
+        modality=modality,
+        meta=meta,
+        status=status,
         owner_id=current_user.id,
     )
-    db.add(dataset)       # stage the insert
-    db.commit()           # actually write to Postgres
-    db.refresh(dataset)   # reload so dataset.id / created_at are populated
+    db.add(dataset)
+    try:
+        db.flush()  # assigns dataset.id (and enforces the unique-name constraint)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"You already have a dataset named {name!r}"
+        )
 
+    dataset.s3_key = f"uploads/{dataset.id}/{file.filename}"
+    storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, dataset.s3_key)
+
+    db.commit()
+    db.refresh(dataset)   # reload so created_at is populated
+
+    # Kick off async content validation for image datasets (validating -> ready/failed).
+    if dataset.modality == MODALITY_IMAGE:
+        validate_dataset_task.delay(dataset.id)
+
+    return dataset
+
+
+@router.patch("/{dataset_id}", response_model=DatasetRead)
+def update_dataset(
+    dataset_id: int,
+    name: str = Form(...),
+    modality: str = Form(...),
+    description: str = Form(""),
+    file: UploadFile | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dataset:
+    """Edit a dataset's name/description, and optionally replace its file (and
+    type). Replacing the file re-processes it; models already trained on the old
+    data are unaffected."""
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or (
+        dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A dataset name is required")
+    if modality not in (MODALITY_TABULAR, MODALITY_IMAGE):
+        raise HTTPException(status_code=400, detail="modality must be tabular or image")
+
+    clash = (
+        db.execute(
+            select(Dataset).where(
+                Dataset.owner_id == dataset.owner_id,
+                Dataset.name == name,
+                Dataset.id != dataset.id,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if clash is not None:
+        raise HTTPException(
+            status_code=409, detail=f"You already have a dataset named {name!r}"
+        )
+
+    replaced = False
+    if file is not None and file.filename:
+        raw_bytes = file.file.read()
+        row_count, column_count, meta, status = _process_dataset_file(
+            raw_bytes, file.filename, modality
+        )
+        old_key = dataset.s3_key
+        new_key = f"uploads/{dataset.id}/{file.filename}"
+        storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, new_key)
+        if old_key and old_key != new_key:
+            storage.delete_fileobj(settings.s3_bucket_datasets, old_key)
+        dataset.filename = file.filename
+        dataset.s3_key = new_key
+        dataset.size_bytes = len(raw_bytes)
+        dataset.modality = modality
+        dataset.row_count = row_count
+        dataset.column_count = column_count
+        dataset.meta = meta
+        dataset.status = status
+        dataset.error = None
+        replaced = True
+    elif modality != dataset.modality:
+        raise HTTPException(
+            status_code=400,
+            detail="Changing the type requires uploading a matching file",
+        )
+
+    dataset.name = name
+    dataset.description = description.strip() or None
+    db.commit()
+    db.refresh(dataset)
+
+    if replaced and dataset.modality == MODALITY_IMAGE:
+        validate_dataset_task.delay(dataset.id)
     return dataset
 
 
@@ -96,19 +248,36 @@ def preview_dataset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Return the column names + first 5 rows of a dataset's CSV (for the UI
-    preview). Downloads only the first few rows from S3."""
+    """Preview a dataset. Tabular -> column names + first 5 rows; image -> its
+    classes + image count (from stored metadata, no download needed)."""
     dataset = db.get(Dataset, dataset_id)
     if dataset is None or (
         dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
     ):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+    # Image datasets: serve the metadata we recorded at upload time.
+    if dataset.modality == MODALITY_IMAGE:
+        return {"modality": MODALITY_IMAGE, **(dataset.meta or {})}
+
+    try:
+        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+    except ClientError as exc:
+        # The metadata row exists but the file is gone from object storage
+        # (e.g. LocalStack was reset). Return a clear 410 instead of a 500.
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NoSuchBucket"):
+            raise HTTPException(
+                status_code=410,
+                detail="Dataset file is no longer available (object storage was "
+                "reset). Please re-upload this dataset.",
+            )
+        raise
     df = pd.read_csv(io.BytesIO(raw), nrows=5)
     # df.to_json handles NaN -> null and numpy types -> native, so the result is
     # always valid JSON; json.loads turns it back into Python objects to return.
     return {
+        "modality": MODALITY_TABULAR,
         "columns": list(df.columns),
         "rows": json.loads(df.to_json(orient="records")),
     }

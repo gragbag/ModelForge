@@ -49,10 +49,21 @@ export const getMe = () => request("/auth/me");
 
 // --- Datasets ---
 export const listDatasets = () => request("/datasets");
-export function uploadDataset(file) {
+export function uploadDataset(file, { name, modality, description } = {}) {
   const form = new FormData();
   form.append("file", file);
+  form.append("name", name);
+  form.append("modality", modality);
+  form.append("description", description || "");
   return request("/datasets", { method: "POST", body: form, isForm: true });
+}
+export function updateDataset(id, { name, modality, description, file }) {
+  const form = new FormData();
+  form.append("name", name);
+  form.append("modality", modality);
+  form.append("description", description || "");
+  if (file) form.append("file", file);
+  return request(`/datasets/${id}`, { method: "PATCH", body: form, isForm: true });
 }
 export const deleteDataset = (id) =>
   request(`/datasets/${id}`, { method: "DELETE" });
@@ -60,7 +71,8 @@ export const getDatasetPreview = (id) => request(`/datasets/${id}/preview`);
 
 // --- Jobs ---
 export const listJobs = () => request("/jobs");
-export const listModelTypes = () => request("/jobs/model-types");
+export const listModelTypes = (modality = "tabular") =>
+  request(`/jobs/model-types?modality=${modality}`);
 export const createJob = (payload) =>
   request("/jobs", { method: "POST", body: payload });
 export const getJob = (id) => request(`/jobs/${id}`);
@@ -69,6 +81,13 @@ export const deleteJob = (id) => request(`/jobs/${id}`, { method: "DELETE" });
 // --- Deployments + prediction ---
 export const listDeployments = () => request("/deployments");
 export const listModelVersions = () => request("/deployments/available-models");
+export const deleteModelVersion = (name, version) =>
+  request(
+    `/deployments/registered-models?name=${encodeURIComponent(
+      name
+    )}&version=${encodeURIComponent(version)}`,
+    { method: "DELETE" }
+  );
 export const createDeployment = (payload) =>
   request("/deployments", { method: "POST", body: payload });
 export const deleteDeployment = (id) =>
@@ -82,6 +101,15 @@ export function predictCsv(deploymentId, file) {
   const form = new FormData();
   form.append("file", file);
   return request(`/deployments/${deploymentId}/predict-csv`, {
+    method: "POST",
+    body: form,
+    isForm: true,
+  });
+}
+export function predictImage(deploymentId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/deployments/${deploymentId}/predict-image`, {
     method: "POST",
     body: form,
     isForm: true,

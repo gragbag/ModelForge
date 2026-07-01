@@ -30,9 +30,15 @@ class DatasetRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    name: str | None
+    description: str | None
     filename: str
     s3_key: str
     size_bytes: int
-    row_count: int
-    column_count: int
+    row_count: int | None
+    column_count: int | None
+    modality: str
+    meta: dict | None
+    status: str
+    error: str | None
     created_at: datetime

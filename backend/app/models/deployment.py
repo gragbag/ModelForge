@@ -8,7 +8,7 @@ Registry. Creating a deployment makes a prediction endpoint available at
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -21,6 +21,11 @@ class Deployment(Base):
     # Which registered MLflow model + version this deployment serves.
     model_name: Mapped[str] = mapped_column(nullable=False)
     model_version: Mapped[str] = mapped_column(nullable=False)
+    # "tabular" or "image" — set at deploy time so the UI knows which predict
+    # interface to show. Existing rows default to tabular.
+    modality: Mapped[str] = mapped_column(
+        String, nullable=False, server_default="tabular", default="tabular"
+    )
     # The user who created the deployment (ownership, like datasets/jobs).
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

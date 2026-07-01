@@ -56,6 +56,15 @@ def upload_fileobj(file_bytes: bytes, bucket: str, key: str) -> None:
         _s3_client.put_object(Bucket=bucket, Key=key, Body=file_bytes)
 
 
+def delete_fileobj(bucket: str, key: str) -> None:
+    """Delete an object from S3 (best-effort). S3 deletes are idempotent, so a
+    missing object is not an error; we only swallow bucket-level issues."""
+    try:
+        _s3_client.delete_object(Bucket=bucket, Key=key)
+    except _s3_client.exceptions.ClientError:
+        pass
+
+
 def download_fileobj(bucket: str, key: str) -> bytes:
     """
     Download an object from S3 and return its raw bytes. Used later by the

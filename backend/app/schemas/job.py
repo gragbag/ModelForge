@@ -25,9 +25,11 @@ class JobCreate(BaseModel):
     # A human-friendly name for the resulting model (used as the registered
     # model name in MLflow). Retraining with the same name adds a new version.
     name: str
+    description: str = ""
     dataset_id: int
     model_type: str
-    target_column: str
+    # Tabular jobs require this; image jobs label by folder, so it's optional.
+    target_column: str | None = None
     # The user declares the problem type. Pydantic will reject anything that
     # isn't "classification" or "regression" automatically (enum validation).
     task_type: TaskType
@@ -44,13 +46,16 @@ class JobRead(BaseModel):
 
     id: int
     name: str | None
+    description: str | None
     status: JobStatus
     dataset_id: int
     model_type: str
-    target_column: str
+    target_column: str | None
     task_type: TaskType
     scale_features: bool
+    hyperparameters: dict | None
     metrics: dict | None
+    progress: dict | None
     model_s3_key: str | None
     error: str | None
     created_at: datetime

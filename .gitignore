@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Large local test fixtures (the small sample_images.zip is committed; big ones aren't)
+sample_data/sample_images_large.zip
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -40,10 +40,35 @@ def create_deployment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Deployment:
-    """Deploy a registered model version (records it; serves it at /predict)."""
+    """Deploy a registered model version (records it; serves it at /predict).
+    A model version can be deployed at most once."""
+    already = (
+        db.execute(
+            select(Deployment).where(
+                Deployment.owner_id == current_user.id,
+                Deployment.model_name == payload.model_name,
+                Deployment.model_version == payload.model_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if already is not None:
+        raise HTTPException(
+            status_code=409, detail="This model version is already deployed"
+        )
+
+    # Detect the model's modality once, so the UI knows whether to offer the
+    # tabular (rows/CSV) or image (upload) prediction interface.
+    modality = (
+        "image"
+        if serving.is_image_model(payload.model_name, payload.model_version)
+        else "tabular"
+    )
     deployment = Deployment(
         model_name=payload.model_name,
         model_version=payload.model_version,
+        modality=modality,
         owner_id=current_user.id,
     )
     db.add(deployment)
@@ -67,10 +92,40 @@ def list_deployments(
 @router.get("/available-models")
 def available_models(
     current_user: User = Depends(get_current_user),
-) -> list[dict[str, str]]:
+) -> list[dict]:
     """List all registered model versions available to deploy (from MLflow), so
     the UI can show meaningful names instead of asking the user to type one."""
     return serving.list_model_versions()
+
+
+@router.delete("/registered-models", status_code=204)
+def delete_registered_model(
+    name: str,
+    version: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a registered model version from the MLflow registry. Any deployment
+    serving it is removed too (cascade), so a model and its deployment stay in
+    lockstep."""
+    deployments = (
+        db.execute(
+            select(Deployment).where(
+                Deployment.model_name == name, Deployment.model_version == version
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for deployment in deployments:
+        db.delete(deployment)
+    db.commit()
+
+    try:
+        serving.delete_model_version(name, version)
+    except Exception:
+        logger.exception("Failed to delete model %s v%s", name, version)
+        raise HTTPException(status_code=400, detail="Could not delete model")
 
 
 @router.delete("/{deployment_id}", status_code=204)
@@ -149,3 +204,33 @@ def predict_csv(
     rows = json.loads(df.to_json(orient="records"))
     predictions = _predict_rows(deployment, rows)
     return PredictResponse(rows=rows, predictions=predictions)
+
+
+@router.post("/{deployment_id}/predict-image")
+def predict_image(
+    deployment_id: int,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Classify a single uploaded image with an image (CNN) deployment.
+    Returns the predicted class + confidence."""
+    deployment = _owned_deployment(deployment_id, db, current_user)
+
+    if not serving.is_image_model(deployment.model_name, deployment.model_version):
+        raise HTTPException(
+            status_code=400, detail="This deployment does not serve an image model"
+        )
+    if not file.filename or not file.filename.lower().endswith(
+        (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp")
+    ):
+        raise HTTPException(status_code=400, detail="Please upload an image file")
+
+    data = file.file.read()
+    try:
+        return serving.predict_images(
+            deployment.model_name, deployment.model_version, [data]
+        )[0]
+    except Exception:
+        logger.exception("Image prediction failed for deployment %s", deployment.id)
+        raise HTTPException(status_code=400, detail="Prediction failed on this image")

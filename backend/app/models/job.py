@@ -60,8 +60,11 @@ class Job(Base):
     # User-given name for the model this job produces — used as the registered
     # model name in MLflow, so deployments can pick models by a meaningful name.
     name: Mapped[str | None] = mapped_column(nullable=True)
+    # Optional free-text notes about this training run.
+    description: Mapped[str | None] = mapped_column(nullable=True)
     model_type: Mapped[str] = mapped_column(nullable=False)
-    target_column: Mapped[str] = mapped_column(nullable=False)
+    # The column to predict — tabular only; image jobs label by folder, so null.
+    target_column: Mapped[str | None] = mapped_column(nullable=True)
     # Whether to standardize features (StandardScaler) before training.
     scale_features: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", default=False
@@ -71,6 +74,9 @@ class Job(Base):
     # NEW (Step 6): the user-specified problem type — classification or regression.
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType), nullable=False)
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # results, once trained
+    # Live training progress for epoch-based (image) jobs: current/total epoch +
+    # per-epoch history (train_loss, val_accuracy). Null for tabular jobs.
+    progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     model_s3_key: Mapped[str | None] = mapped_column(nullable=True)  # where the artifact is saved
     error: Mapped[str | None] = mapped_column(nullable=True)  # failure reason, if any
     created_at: Mapped[datetime] = mapped_column(

@@ -10,19 +10,21 @@ Step 12 adds RELIABILITY around the training work:
 The core idea: tell TRANSIENT failures (retry) apart from PERMANENT ones (fail fast).
 """
 
-import io
-
-import joblib
-import pandas as pd
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy.exc import OperationalError
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.dataset import Dataset
+from app.models.dataset import (
+    STATUS_FAILED,
+    STATUS_READY,
+    STATUS_VALIDATING,
+    Dataset,
+)
 from app.models.job import Job, JobStatus
-from app.services import storage, tracking, training
+from app.services import image_data, storage
+from app.services.trainers import get_trainer
 
 # Connection-level errors worth RETRYING — momentary network/endpoint/DB
 # glitches. NOTE: ClientError is deliberately NOT here anymore. A boto3
@@ -51,6 +53,14 @@ def _mark_failed(db, job: Job | None, message: str) -> None:
         db.commit()
 
 
+def _fail_dataset(db, dataset: Dataset | None, message: str) -> None:
+    """Mark a dataset's validation as failed (shown in the UI)."""
+    if dataset is not None:
+        dataset.status = STATUS_FAILED
+        dataset.error = message
+        db.commit()
+
+
 @celery_app.task(
     bind=True,        # `bind=True` gives us `self` -> self.retry(), self.request.retries
     name="train_model",
@@ -74,31 +84,21 @@ def train_model_task(self, job_id: int) -> None:
         if dataset is None:
             raise ValueError(f"Dataset {job.dataset_id} not found")
 
-        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
-        df = pd.read_csv(io.BytesIO(raw))
+        # Dispatch to the trainer for this dataset's modality (tabular today;
+        # image/text trainers plug in here). The trainer owns the whole
+        # modality-specific pipeline: load data, train, log, and persist.
+        trainer = get_trainer(dataset.modality)
 
-        model, metrics = training.train_and_evaluate(
-            df=df,
-            target_column=job.target_column,
-            task_type=job.task_type,
-            model_type=job.model_type,
-            hyperparameters=job.hyperparameters,
-            scale_features=job.scale_features,
-        )
+        # Live progress: epoch-based trainers call this each epoch; we persist it
+        # to the job row so the frontend's polling picks it up.
+        def report_progress(progress: dict) -> None:
+            job.progress = progress
+            db.commit()
 
-        # Log this run to MLflow (params, metrics, model + registry). Best-effort:
-        # tracking.log_run swallows its own errors so it can't fail the job.
-        tracking.log_run(job, model, metrics)
+        outcome = trainer.run(job, dataset, progress_cb=report_progress)
 
-        # Deterministic key: a re-run overwrites the SAME S3 object rather than
-        # creating duplicates — another piece of idempotency.
-        buffer = io.BytesIO()
-        joblib.dump(model, buffer)
-        model_key = f"models/{job.id}/model.joblib"
-        storage.upload_fileobj(buffer.getvalue(), settings.s3_bucket_models, model_key)
-
-        job.model_s3_key = model_key
-        job.metrics = metrics
+        job.model_s3_key = outcome.model_s3_key
+        job.metrics = outcome.metrics
         job.status = JobStatus.COMPLETED
         db.commit()
 
@@ -127,6 +127,56 @@ def train_model_task(self, job_id: int) -> None:
         # ---- Permanent failure (e.g. bad data / missing column) -----------
         # Not in TRANSIENT_ERRORS, so retrying wouldn't help. Record + re-raise.
         _mark_failed(db, job, str(exc))
+        raise
+
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="validate_dataset", max_retries=3)
+def validate_dataset_task(self, dataset_id: int) -> None:
+    """Content-validate an uploaded image dataset in the background.
+
+    Downloads the zip, opens every image (work too heavy for the upload request),
+    and moves the dataset validating -> ready (with final metadata) or failed
+    (with a reason). Same transient-vs-permanent error handling as training.
+    """
+    db = SessionLocal()
+    dataset = None
+    try:
+        dataset = db.get(Dataset, dataset_id)
+        # Gone, or already finalized by an earlier run -> nothing to do (idempotent).
+        if dataset is None or dataset.status != STATUS_VALIDATING:
+            return
+
+        raw = storage.download_fileobj(settings.s3_bucket_datasets, dataset.s3_key)
+
+        try:
+            meta = image_data.validate_contents(raw)
+        except ValueError as exc:
+            # The data itself is bad (not images / too few classes) — permanent.
+            _fail_dataset(db, dataset, str(exc))
+            return
+
+        dataset.meta = meta
+        dataset.status = STATUS_READY
+        dataset.error = None
+        db.commit()
+
+    except ClientError as exc:
+        if _is_transient_client_error(exc) and self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+        _fail_dataset(db, dataset, str(exc))
+        raise
+
+    except TRANSIENT_ERRORS as exc:
+        if self.request.retries >= self.max_retries:
+            _fail_dataset(db, dataset, f"Failed after {self.request.retries} retries: {exc}")
+            raise
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+
+    except Exception as exc:
+        _fail_dataset(db, dataset, str(exc))
         raise
 
     finally:
