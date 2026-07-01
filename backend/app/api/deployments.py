@@ -40,7 +40,24 @@ def create_deployment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Deployment:
-    """Deploy a registered model version (records it; serves it at /predict)."""
+    """Deploy a registered model version (records it; serves it at /predict).
+    A model version can be deployed at most once."""
+    already = (
+        db.execute(
+            select(Deployment).where(
+                Deployment.owner_id == current_user.id,
+                Deployment.model_name == payload.model_name,
+                Deployment.model_version == payload.model_version,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if already is not None:
+        raise HTTPException(
+            status_code=409, detail="This model version is already deployed"
+        )
+
     # Detect the model's modality once, so the UI knows whether to offer the
     # tabular (rows/CSV) or image (upload) prediction interface.
     modality = (
@@ -88,22 +105,22 @@ def delete_registered_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    """Delete a registered model version from the MLflow registry (clears stale
-    models from the deploy list). Blocked if a deployment is still serving it."""
-    in_use = (
+    """Delete a registered model version from the MLflow registry. Any deployment
+    serving it is removed too (cascade), so a model and its deployment stay in
+    lockstep."""
+    deployments = (
         db.execute(
             select(Deployment).where(
                 Deployment.model_name == name, Deployment.model_version == version
             )
         )
         .scalars()
-        .first()
+        .all()
     )
-    if in_use is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="This model is deployed — delete the deployment first.",
-        )
+    for deployment in deployments:
+        db.delete(deployment)
+    db.commit()
+
     try:
         serving.delete_model_version(name, version)
     except Exception:

@@ -14,6 +14,8 @@ import { btnDanger, cardClass, inputClass } from "../ui";
 const BADGE = "rounded bg-slate-700 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-300";
 const deployBtn =
   "rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-600";
+const undeployBtn =
+  "rounded-lg border border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-300 transition hover:bg-slate-700";
 
 function metricsLine(metrics) {
   const entries = Object.entries(metrics || {});
@@ -72,14 +74,33 @@ export default function Deployments() {
     try {
       await createDeployment({ model_name: model.name, model_version: model.version });
       await refresh();
-      setView("inference"); // jump to where you'll use it
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleUndeploy(model) {
+    setError("");
+    try {
+      const matches = deployments.filter(
+        (d) =>
+          d.model_name === model.name &&
+          String(d.model_version) === String(model.version)
+      );
+      if (matches.some((d) => d.id === Number(selectedId))) setSelectedId("");
+      for (const d of matches) await deleteDeployment(d.id);
+      await refresh();
     } catch (err) {
       setError(err.message);
     }
   }
 
   async function handleDeleteModel(model) {
-    if (!window.confirm(`Delete ${model.name} v${model.version} from the registry?`))
+    if (
+      !window.confirm(
+        `Delete ${model.name} v${model.version}? This removes the model and any deployment of it.`
+      )
+    )
       return;
     setError("");
     try {
@@ -223,6 +244,11 @@ export default function Deployments() {
                 const p = v.params || {};
                 const hp = parseHyper(p);
                 const ml = metricsLine(v.metrics);
+                const deployed = deployments.find(
+                  (d) =>
+                    d.model_name === v.name &&
+                    String(d.model_version) === String(v.version)
+                );
                 return (
                   <div
                     key={`${v.name}-${v.version}`}
@@ -233,6 +259,11 @@ export default function Deployments() {
                         <div className="font-medium">
                           {v.name}{" "}
                           <span className="text-xs text-slate-500">v{v.version}</span>
+                          {deployed && (
+                            <span className="ml-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
+                              deployed
+                            </span>
+                          )}
                         </div>
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
                           {p.model_type && (
@@ -268,9 +299,21 @@ export default function Deployments() {
                         )}
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        <button onClick={() => handleDeploy(v)} className={deployBtn}>
-                          Deploy
-                        </button>
+                        {deployed ? (
+                          <button
+                            onClick={() => handleUndeploy(v)}
+                            className={undeployBtn}
+                          >
+                            Undeploy
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleDeploy(v)}
+                            className={deployBtn}
+                          >
+                            Deploy
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDeleteModel(v)}
                           className={btnDanger}
