@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   listDatasets,
   uploadDataset,
+  updateDataset,
   deleteDataset,
   getDatasetPreview,
 } from "../api";
@@ -30,7 +31,8 @@ export default function Datasets() {
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(null); // which dataset id is open
   const [previews, setPreviews] = useState({}); // id -> preview (cache)
-  const [showUpload, setShowUpload] = useState(false);
+  // null = closed, "new" = upload form, a dataset object = edit form.
+  const [modalFor, setModalFor] = useState(null);
 
   async function refresh() {
     try {
@@ -78,7 +80,7 @@ export default function Datasets() {
     <section>
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Datasets</h2>
-        <button className={btnPrimary} onClick={() => setShowUpload(true)}>
+        <button className={btnPrimary} onClick={() => setModalFor("new")}>
           Upload dataset
         </button>
       </div>
@@ -112,6 +114,7 @@ export default function Datasets() {
                   isOpen={expanded === d.id}
                   preview={previews[d.id]}
                   onToggle={() => togglePreview(d.id)}
+                  onEdit={() => setModalFor(d)}
                   onDelete={() => handleDelete(d.id)}
                 />
               ))
@@ -120,11 +123,12 @@ export default function Datasets() {
         </table>
       </div>
 
-      {showUpload && (
-        <UploadModal
-          onClose={() => setShowUpload(false)}
-          onUploaded={() => {
-            setShowUpload(false);
+      {modalFor && (
+        <DatasetModal
+          dataset={modalFor === "new" ? null : modalFor}
+          onClose={() => setModalFor(null)}
+          onSaved={() => {
+            setModalFor(null);
             refresh();
           }}
         />
@@ -133,25 +137,32 @@ export default function Datasets() {
   );
 }
 
-function UploadModal({ onClose, onUploaded }) {
-  const [name, setName] = useState("");
-  const [modality, setModality] = useState("tabular");
-  const [description, setDescription] = useState("");
+function DatasetModal({ dataset, onClose, onSaved }) {
+  const isEdit = Boolean(dataset);
+  const [name, setName] = useState(dataset?.name || "");
+  const [modality, setModality] = useState(dataset?.modality || "tabular");
+  const [description, setDescription] = useState(dataset?.description || "");
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const isImage = modality === "image";
   const accept = isImage ? ".zip" : ".csv";
+  // Editing the type requires a new file of that type; a new upload always needs one.
+  const typeChanged = isEdit && modality !== dataset.modality;
+  const fileRequired = !isEdit || typeChanged;
+  const canSubmit = name.trim() && (!fileRequired || file);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    if (!name.trim() || !file) return;
+    if (!canSubmit) return;
     setBusy(true);
     try {
-      await uploadDataset(file, { name: name.trim(), modality, description });
-      onUploaded();
+      const payload = { name: name.trim(), modality, description, file };
+      if (isEdit) await updateDataset(dataset.id, payload);
+      else await uploadDataset(file, payload);
+      onSaved();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -169,7 +180,9 @@ function UploadModal({ onClose, onUploaded }) {
         onClick={(e) => e.stopPropagation()}
         className={`w-full max-w-md space-y-4 ${cardClass}`}
       >
-        <h3 className="text-lg font-semibold">New dataset</h3>
+        <h3 className="text-lg font-semibold">
+          {isEdit ? "Update dataset" : "New dataset"}
+        </h3>
 
         <div>
           <label className={labelClass}>Name</label>
@@ -218,7 +231,12 @@ function UploadModal({ onClose, onUploaded }) {
 
         <div>
           <label className={labelClass}>
-            {isImage ? "Image zip (folder-per-class)" : "CSV file"}
+            {isEdit
+              ? "Replace file"
+              : isImage
+                ? "Image zip (folder-per-class)"
+                : "CSV file"}
+            {isEdit && !typeChanged && " (optional)"}
           </label>
           <label className="block cursor-pointer rounded-lg border border-dashed border-slate-600 px-4 py-5 text-center text-sm text-slate-400 transition hover:border-slate-500">
             {file ? (
@@ -233,6 +251,16 @@ function UploadModal({ onClose, onUploaded }) {
               className="hidden"
             />
           </label>
+          {isEdit && !file && (
+            <p className="mt-1 text-xs text-slate-500">
+              Current: {dataset.filename}
+            </p>
+          )}
+          {typeChanged && (
+            <p className="mt-1 text-xs text-amber-400">
+              Changing the type requires a new {accept} file.
+            </p>
+          )}
         </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -245,12 +273,8 @@ function UploadModal({ onClose, onUploaded }) {
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={busy || !name.trim() || !file}
-            className={btnPrimary}
-          >
-            {busy ? "Uploading…" : "Upload"}
+          <button type="submit" disabled={busy || !canSubmit} className={btnPrimary}>
+            {busy ? "Saving…" : isEdit ? "Save changes" : "Upload"}
           </button>
         </div>
       </form>
@@ -258,7 +282,7 @@ function UploadModal({ onClose, onUploaded }) {
   );
 }
 
-function DatasetRow({ dataset: d, isOpen, preview, onToggle, onDelete }) {
+function DatasetRow({ dataset: d, isOpen, preview, onToggle, onEdit, onDelete }) {
   return (
     <>
       <tr className={rowClass}>
@@ -302,6 +326,12 @@ function DatasetRow({ dataset: d, isOpen, preview, onToggle, onDelete }) {
           </span>
         </td>
         <td className={`${tdClass} text-right`}>
+          <button
+            onClick={onEdit}
+            className="mr-2 rounded-md border border-slate-600 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+          >
+            Edit
+          </button>
           <button onClick={onDelete} className={btnDanger}>
             Delete
           </button>

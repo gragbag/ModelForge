@@ -41,6 +41,33 @@ from app.services.tasks import validate_dataset_task
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
+def _process_dataset_file(
+    raw_bytes: bytes, filename: str, modality: str
+) -> tuple[int | None, int | None, dict | None, str]:
+    """Validate a dataset file against its modality and derive
+    (row_count, column_count, meta, status). Raises on a bad/mismatched file."""
+    fname = filename.lower()
+    if modality == MODALITY_TABULAR:
+        if not fname.endswith(".csv"):
+            raise HTTPException(status_code=400, detail="A tabular dataset must be a .csv file")
+        try:
+            df = pd.read_csv(io.BytesIO(raw_bytes))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+        return df.shape[0], df.shape[1], None, STATUS_READY
+
+    if not fname.endswith(".zip"):
+        raise HTTPException(
+            status_code=400,
+            detail="An image dataset must be a .zip of folder-per-class images",
+        )
+    try:
+        meta = image_data.inspect_structure(raw_bytes)  # cheap, no decoding
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return None, None, meta, STATUS_VALIDATING
+
+
 @router.post("", response_model=DatasetRead, status_code=201)
 def upload_dataset(
     file: UploadFile,
@@ -80,36 +107,9 @@ def upload_dataset(
     # Read the whole file into memory. (Fine for the modest files we expect; a
     # production system would stream large uploads straight to S3.)
     raw_bytes = file.file.read()
-    fname = file.filename.lower()
-
-    # Validate the file matches the chosen modality, and derive metadata. Tabular
-    # is parsed synchronously (immediately "ready"); image zips get a cheap
-    # structural check now, with full per-image validation in a background task.
-    row_count: int | None = None
-    column_count: int | None = None
-    meta: dict | None = None
-    if modality == MODALITY_TABULAR:
-        if not fname.endswith(".csv"):
-            raise HTTPException(
-                status_code=400, detail="A tabular dataset must be a .csv file"
-            )
-        status = STATUS_READY
-        try:
-            df = pd.read_csv(io.BytesIO(raw_bytes))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
-        row_count, column_count = df.shape[0], df.shape[1]
-    else:  # image
-        if not fname.endswith(".zip"):
-            raise HTTPException(
-                status_code=400,
-                detail="An image dataset must be a .zip of folder-per-class images",
-            )
-        status = STATUS_VALIDATING
-        try:
-            meta = image_data.inspect_structure(raw_bytes)  # cheap, no decoding
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    row_count, column_count, meta, status = _process_dataset_file(
+        raw_bytes, file.filename, modality
+    )
 
     # Insert the row first so Postgres assigns the auto-increment id, then key
     # the S3 object by that id — unique per dataset, and consistent with the
@@ -147,6 +147,84 @@ def upload_dataset(
     if dataset.modality == MODALITY_IMAGE:
         validate_dataset_task.delay(dataset.id)
 
+    return dataset
+
+
+@router.patch("/{dataset_id}", response_model=DatasetRead)
+def update_dataset(
+    dataset_id: int,
+    name: str = Form(...),
+    modality: str = Form(...),
+    description: str = Form(""),
+    file: UploadFile | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dataset:
+    """Edit a dataset's name/description, and optionally replace its file (and
+    type). Replacing the file re-processes it; models already trained on the old
+    data are unaffected."""
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or (
+        dataset.owner_id != current_user.id and current_user.role != Role.ADMIN
+    ):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A dataset name is required")
+    if modality not in (MODALITY_TABULAR, MODALITY_IMAGE):
+        raise HTTPException(status_code=400, detail="modality must be tabular or image")
+
+    clash = (
+        db.execute(
+            select(Dataset).where(
+                Dataset.owner_id == dataset.owner_id,
+                Dataset.name == name,
+                Dataset.id != dataset.id,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if clash is not None:
+        raise HTTPException(
+            status_code=409, detail=f"You already have a dataset named {name!r}"
+        )
+
+    replaced = False
+    if file is not None and file.filename:
+        raw_bytes = file.file.read()
+        row_count, column_count, meta, status = _process_dataset_file(
+            raw_bytes, file.filename, modality
+        )
+        old_key = dataset.s3_key
+        new_key = f"uploads/{dataset.id}/{file.filename}"
+        storage.upload_fileobj(raw_bytes, settings.s3_bucket_datasets, new_key)
+        if old_key and old_key != new_key:
+            storage.delete_fileobj(settings.s3_bucket_datasets, old_key)
+        dataset.filename = file.filename
+        dataset.s3_key = new_key
+        dataset.size_bytes = len(raw_bytes)
+        dataset.modality = modality
+        dataset.row_count = row_count
+        dataset.column_count = column_count
+        dataset.meta = meta
+        dataset.status = status
+        dataset.error = None
+        replaced = True
+    elif modality != dataset.modality:
+        raise HTTPException(
+            status_code=400,
+            detail="Changing the type requires uploading a matching file",
+        )
+
+    dataset.name = name
+    dataset.description = description.strip() or None
+    db.commit()
+    db.refresh(dataset)
+
+    if replaced and dataset.modality == MODALITY_IMAGE:
+        validate_dataset_task.delay(dataset.id)
     return dataset
 
 

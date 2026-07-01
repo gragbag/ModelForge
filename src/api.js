@@ -57,6 +57,14 @@ export function uploadDataset(file, { name, modality, description } = {}) {
   form.append("description", description || "");
   return request("/datasets", { method: "POST", body: form, isForm: true });
 }
+export function updateDataset(id, { name, modality, description, file }) {
+  const form = new FormData();
+  form.append("name", name);
+  form.append("modality", modality);
+  form.append("description", description || "");
+  if (file) form.append("file", file);
+  return request(`/datasets/${id}`, { method: "PATCH", body: form, isForm: true });
+}
 export const deleteDataset = (id) =>
   request(`/datasets/${id}`, { method: "DELETE" });
 export const getDatasetPreview = (id) => request(`/datasets/${id}/preview`);
