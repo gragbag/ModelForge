@@ -60,6 +60,8 @@ class Job(Base):
     # User-given name for the model this job produces — used as the registered
     # model name in MLflow, so deployments can pick models by a meaningful name.
     name: Mapped[str | None] = mapped_column(nullable=True)
+    # Optional free-text notes about this training run.
+    description: Mapped[str | None] = mapped_column(nullable=True)
     model_type: Mapped[str] = mapped_column(nullable=False)
     # The column to predict — tabular only; image jobs label by folder, so null.
     target_column: Mapped[str | None] = mapped_column(nullable=True)

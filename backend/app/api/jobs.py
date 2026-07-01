@@ -88,6 +88,7 @@ def create_job(
 
     job = Job(
         name=payload.name,
+        description=payload.description or None,
         dataset_id=payload.dataset_id,
         model_type=payload.model_type,
         target_column=payload.target_column,

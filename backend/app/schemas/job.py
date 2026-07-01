@@ -25,6 +25,7 @@ class JobCreate(BaseModel):
     # A human-friendly name for the resulting model (used as the registered
     # model name in MLflow). Retraining with the same name adds a new version.
     name: str
+    description: str = ""
     dataset_id: int
     model_type: str
     # Tabular jobs require this; image jobs label by folder, so it's optional.
@@ -45,6 +46,7 @@ class JobRead(BaseModel):
 
     id: int
     name: str | None
+    description: str | None
     status: JobStatus
     dataset_id: int
     model_type: str
