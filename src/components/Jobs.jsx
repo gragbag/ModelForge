@@ -82,6 +82,7 @@ export default function Jobs() {
   const [modelQuery, setModelQuery] = useState(""); // filters the model cards
   const [description, setDescription] = useState("");
   const [step, setStep] = useState(0); // wizard step index
+  const [expandedJob, setExpandedJob] = useState(null); // open run card
 
   // The modality of the chosen dataset drives the whole form (which models,
   // whether a target column / task / scaling apply).
@@ -236,7 +237,7 @@ export default function Jobs() {
         <div className="inline-flex rounded-lg border border-slate-700 bg-slate-800 p-1">
           {[
             ["train", "Train"],
-            ["models", "Models"],
+            ["models", "Results"],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -551,89 +552,33 @@ export default function Jobs() {
           </div>
         </div>
       ) : (
-        /* ---------------- Models: trained jobs table ---------------- */
-        <div className="overflow-hidden rounded-xl border border-slate-700">
-          <table className="w-full bg-slate-800 text-sm">
-            <thead className="bg-slate-700/50 text-left text-xs uppercase tracking-wide text-slate-400">
-              <tr>
-                <th className="px-4 py-3 font-medium">ID</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Model</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Target</th>
-                <th className="px-4 py-3 font-medium">Metrics</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="px-4 py-10 text-center text-slate-400">
-                    No models trained yet. Switch to{" "}
-                    <button
-                      onClick={() => setView("train")}
-                      className="font-medium text-emerald-400 hover:underline"
-                    >
-                      Train
-                    </button>{" "}
-                    to create one.
-                  </td>
-                </tr>
-              ) : (
-                jobs.map((j) => (
-                  <tr
-                    key={j.id}
-                    className="border-t border-slate-700 transition hover:bg-slate-700/30"
-                  >
-                    <td className="px-4 py-3 text-slate-400">{j.id}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{j.name || "—"}</div>
-                      {j.description && (
-                        <div className="max-w-[16rem] truncate text-xs text-slate-500">
-                          {j.description}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-300">
-                      {j.model_type}
-                      {j.scale_features ? " (scaled)" : ""}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          STATUS_COLORS[j.status] || ""
-                        }`}
-                      >
-                        {j.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300">{j.target_column}</td>
-                    <td className="px-4 py-3 text-xs">
-                      {j.status === "running" && j.progress ? (
-                        <TrainingProgress progress={j.progress} />
-                      ) : j.metrics ? (
-                        <span className="font-mono text-slate-300">
-                          {Object.entries(j.metrics)
-                            .map(([k, v]) => `${k}=${Number(v).toFixed(3)}`)
-                            .join("  ")}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => handleDelete(j.id)}
-                        className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        /* ---------------- Results: training run cards ---------------- */
+        <div className="space-y-3">
+          {jobs.length === 0 ? (
+            <p className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-10 text-center text-slate-400">
+              No training runs yet. Switch to{" "}
+              <button
+                onClick={() => setView("train")}
+                className="font-medium text-emerald-400 hover:underline"
+              >
+                Train
+              </button>{" "}
+              to create one.
+            </p>
+          ) : (
+            jobs.map((j) => (
+              <JobCard
+                key={j.id}
+                job={j}
+                dataset={datasets.find((d) => d.id === j.dataset_id)}
+                isOpen={expandedJob === j.id}
+                onToggle={() =>
+                  setExpandedJob(expandedJob === j.id ? null : j.id)
+                }
+                onDelete={() => handleDelete(j.id)}
+              />
+            ))
+          )}
         </div>
       )}
     </section>
@@ -679,6 +624,104 @@ function TrainingProgress({ progress }) {
       <div className="h-1 w-28 rounded bg-slate-700">
         <div className="h-1 rounded bg-emerald-500" style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  );
+}
+
+// One label/value line in a run's expanded details.
+function Detail({ label, value, mono, tone }) {
+  const color =
+    tone === "emerald"
+      ? "text-emerald-300"
+      : tone === "red"
+        ? "text-red-300"
+        : "text-slate-300";
+  return (
+    <div className="flex gap-3">
+      <span className="w-24 shrink-0 uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <span className={`min-w-0 break-words ${mono ? "font-mono " : ""}${color}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// A training run as an expandable card (collapsed: name/model/status + live
+// progress; expanded: dataset, config, hyperparameters, metrics, errors).
+function JobCard({ job: j, dataset, isOpen, onToggle, onDelete }) {
+  const metrics = j.metrics
+    ? Object.entries(j.metrics)
+        .map(([k, v]) => `${k}=${Number(v).toFixed(3)}`)
+        .join("  ")
+    : null;
+  const hp =
+    j.hyperparameters && Object.keys(j.hyperparameters).length
+      ? Object.entries(j.hyperparameters)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("  ")
+      : null;
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-800">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          onClick={onToggle}
+          className="text-slate-400 transition hover:text-slate-200"
+          aria-label="Toggle details"
+        >
+          {isOpen ? "▾" : "▸"}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{j.name || "—"}</div>
+          {j.description && (
+            <div className="truncate text-xs text-slate-500">{j.description}</div>
+          )}
+        </div>
+        <span className="rounded bg-slate-700 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-300">
+          {j.model_type}
+        </span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            STATUS_COLORS[j.status] || ""
+          }`}
+        >
+          {j.status}
+        </span>
+        <button
+          onClick={onDelete}
+          className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
+        >
+          Delete
+        </button>
+      </div>
+
+      {j.status === "running" && j.progress && (
+        <div className="px-4 pb-3">
+          <TrainingProgress progress={j.progress} />
+        </div>
+      )}
+
+      {isOpen && (
+        <div className="space-y-2 border-t border-slate-700 px-4 py-3 text-xs">
+          <Detail
+            label="Dataset"
+            value={dataset ? dataset.name || dataset.filename : `#${j.dataset_id}`}
+          />
+          {j.target_column && <Detail label="Target" value={j.target_column} />}
+          <Detail label="Task" value={j.task_type} />
+          {j.scale_features && <Detail label="Scaled" value="yes" />}
+          {hp && <Detail label="Params" value={hp} mono />}
+          <Detail
+            label="Metrics"
+            value={metrics || "—"}
+            mono
+            tone={metrics ? "emerald" : undefined}
+          />
+          {j.error && <Detail label="Error" value={j.error} tone="red" />}
+        </div>
+      )}
     </div>
   );
 }

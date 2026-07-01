@@ -53,6 +53,7 @@ class JobRead(BaseModel):
     target_column: str | None
     task_type: TaskType
     scale_features: bool
+    hyperparameters: dict | None
     metrics: dict | None
     progress: dict | None
     model_s3_key: str | None
