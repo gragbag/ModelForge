@@ -6,19 +6,7 @@ import {
   deleteDataset,
   getDatasetPreview,
 } from "../api";
-import {
-  btnDanger,
-  btnPrimary,
-  cardClass,
-  inputClass,
-  labelClass,
-  rowClass,
-  tableClass,
-  tableWrap,
-  tdClass,
-  theadClass,
-  thClass,
-} from "../ui";
+import { btnDanger, btnPrimary, cardClass, inputClass, labelClass } from "../ui";
 
 const STATUS_COLORS = {
   validating: "bg-blue-500/20 text-blue-300",
@@ -33,6 +21,7 @@ export default function Datasets() {
   const [previews, setPreviews] = useState({}); // id -> preview (cache)
   // null = closed, "new" = upload form, a dataset object = edit form.
   const [modalFor, setModalFor] = useState(null);
+  const [query, setQuery] = useState("");
 
   async function refresh() {
     try {
@@ -76,6 +65,15 @@ export default function Datasets() {
     }
   }
 
+  const q = query.trim().toLowerCase();
+  const filtered = datasets.filter(
+    (d) =>
+      !q ||
+      [d.name, d.filename, d.description, d.modality].some((s) =>
+        (s || "").toLowerCase().includes(q)
+      )
+  );
+
   return (
     <section>
       <div className="mb-6 flex items-center justify-between">
@@ -87,40 +85,51 @@ export default function Datasets() {
 
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
-      <div className={tableWrap}>
-        <table className={tableClass}>
-          <thead className={theadClass}>
-            <tr>
-              <th className={`${thClass} w-8`}></th>
-              <th className={thClass}>Name</th>
-              <th className={thClass}>Type</th>
-              <th className={thClass}>Details</th>
-              <th className={thClass}>Status</th>
-              <th className={thClass}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {datasets.length === 0 ? (
-              <tr>
-                <td colSpan="6" className="px-4 py-10 text-center text-slate-400">
-                  No datasets yet — upload a CSV or image zip to get started.
-                </td>
-              </tr>
-            ) : (
-              datasets.map((d) => (
-                <DatasetRow
-                  key={d.id}
-                  dataset={d}
-                  isOpen={expanded === d.id}
-                  preview={previews[d.id]}
-                  onToggle={() => togglePreview(d.id)}
-                  onEdit={() => setModalFor(d)}
-                  onDelete={() => handleDelete(d.id)}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
+      {/* Search */}
+      <div className="relative mb-4">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={2}
+          stroke="currentColor"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m21 21-4.3-4.3m0 0A7.5 7.5 0 1 0 5.6 5.6a7.5 7.5 0 0 0 10.6 10.6Z"
+          />
+        </svg>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search datasets…"
+          className="w-full rounded-lg border border-slate-600 bg-slate-700 py-2 pl-9 pr-3 text-sm text-slate-100 transition focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+        />
+      </div>
+
+      <div className="space-y-3">
+        {filtered.length === 0 ? (
+          <p className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-10 text-center text-slate-400">
+            {datasets.length === 0
+              ? "No datasets yet — upload a CSV or image zip to get started."
+              : `No datasets match “${query}”.`}
+          </p>
+        ) : (
+          filtered.map((d) => (
+            <DatasetCard
+              key={d.id}
+              dataset={d}
+              isOpen={expanded === d.id}
+              preview={previews[d.id]}
+              onToggle={() => togglePreview(d.id)}
+              onEdit={() => setModalFor(d)}
+              onDelete={() => handleDelete(d.id)}
+            />
+          ))
+        )}
       </div>
 
       {modalFor && (
@@ -282,31 +291,27 @@ function DatasetModal({ dataset, onClose, onSaved }) {
   );
 }
 
-function DatasetRow({ dataset: d, isOpen, preview, onToggle, onEdit, onDelete }) {
+function DatasetCard({ dataset: d, isOpen, preview, onToggle, onEdit, onDelete }) {
   return (
-    <>
-      <tr className={rowClass}>
-        <td className={tdClass}>
-          <button
-            onClick={onToggle}
-            className="text-slate-400 transition hover:text-slate-200"
-            aria-label="Toggle preview"
-          >
-            {isOpen ? "▾" : "▸"}
-          </button>
-        </td>
-        <td className={tdClass}>
-          <div className="font-medium">{d.name || d.filename}</div>
+    <div className="rounded-xl border border-slate-700 bg-slate-800 transition hover:border-slate-600">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          onClick={onToggle}
+          className="text-slate-400 transition hover:text-slate-200"
+          aria-label="Toggle preview"
+        >
+          {isOpen ? "▾" : "▸"}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{d.name || d.filename}</div>
           {d.name && (
-            <div className="text-xs text-slate-500">{d.filename}</div>
+            <div className="truncate text-xs text-slate-500">{d.filename}</div>
           )}
-        </td>
-        <td className={tdClass}>
-          <span className="rounded bg-slate-700 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-300">
-            {d.modality}
-          </span>
-        </td>
-        <td className={`${tdClass} text-slate-300`}>
+        </div>
+        <span className="rounded bg-slate-700 px-1.5 py-0.5 text-xs uppercase tracking-wide text-slate-300">
+          {d.modality}
+        </span>
+        <span className="hidden text-xs text-slate-400 sm:block">
           {d.modality === "image"
             ? d.meta
               ? `${d.meta.num_images} imgs · ${d.meta.num_classes} classes`
@@ -314,89 +319,83 @@ function DatasetRow({ dataset: d, isOpen, preview, onToggle, onEdit, onDelete })
             : d.row_count != null
               ? `${d.row_count} × ${d.column_count}`
               : "—"}
-        </td>
-        <td className={tdClass}>
-          <span
-            title={d.error || ""}
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-              STATUS_COLORS[d.status] || ""
-            }`}
-          >
-            {d.status}
-          </span>
-        </td>
-        <td className={`${tdClass} text-right`}>
-          <button
-            onClick={onEdit}
-            className="mr-2 rounded-md border border-slate-600 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
-          >
-            Edit
-          </button>
-          <button onClick={onDelete} className={btnDanger}>
-            Delete
-          </button>
-        </td>
-      </tr>
+        </span>
+        <span
+          title={d.error || ""}
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            STATUS_COLORS[d.status] || ""
+          }`}
+        >
+          {d.status}
+        </span>
+        <button
+          onClick={onEdit}
+          className="rounded-md border border-slate-600 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+        >
+          Edit
+        </button>
+        <button onClick={onDelete} className={btnDanger}>
+          Delete
+        </button>
+      </div>
 
       {isOpen && (
-        <tr className="bg-slate-950">
-          <td colSpan="6" className="px-4 py-4">
-            {d.description && (
-              <p className="mb-3 text-xs italic text-slate-400">{d.description}</p>
-            )}
-            {!preview ? (
-              <p className="text-xs text-slate-400">Loading preview…</p>
-            ) : d.modality === "image" ? (
-              <div className="text-xs text-slate-300">
-                <p className="mb-2 font-medium uppercase tracking-wide text-slate-400">
-                  {preview.num_images} images · {preview.num_classes} classes
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {(preview.classes || []).map((c) => (
-                    <span key={c} className="rounded bg-slate-700 px-2 py-0.5">
-                      {c}
-                    </span>
-                  ))}
-                </div>
+        <div className="border-t border-slate-700 px-4 py-4">
+          {d.description && (
+            <p className="mb-3 text-xs italic text-slate-400">{d.description}</p>
+          )}
+          {!preview ? (
+            <p className="text-xs text-slate-400">Loading preview…</p>
+          ) : d.modality === "image" ? (
+            <div className="text-xs text-slate-300">
+              <p className="mb-2 font-medium uppercase tracking-wide text-slate-400">
+                {preview.num_images} images · {preview.num_classes} classes
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(preview.classes || []).map((c) => (
+                  <span key={c} className="rounded bg-slate-700 px-2 py-0.5">
+                    {c}
+                  </span>
+                ))}
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-                  First {preview.rows.length} rows
-                </p>
-                <table className="text-xs">
-                  <thead>
-                    <tr className="text-left text-slate-400">
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                First {preview.rows.length} rows
+              </p>
+              <table className="text-xs">
+                <thead>
+                  <tr className="text-left text-slate-400">
+                    {preview.columns.map((c) => (
+                      <th
+                        key={c}
+                        className="border-b border-slate-700 px-3 py-1.5 font-medium"
+                      >
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.map((row, i) => (
+                    <tr key={i}>
                       {preview.columns.map((c) => (
-                        <th
+                        <td
                           key={c}
-                          className="border-b border-slate-700 px-3 py-1.5 font-medium"
+                          className="border-b border-slate-800 px-3 py-1.5 text-slate-300"
                         >
-                          {c}
-                        </th>
+                          {String(row[c])}
+                        </td>
                       ))}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.map((row, i) => (
-                      <tr key={i}>
-                        {preview.columns.map((c) => (
-                          <td
-                            key={c}
-                            className="border-b border-slate-800 px-3 py-1.5 text-slate-300"
-                          >
-                            {String(row[c])}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </td>
-        </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
-    </>
+    </div>
   );
 }
