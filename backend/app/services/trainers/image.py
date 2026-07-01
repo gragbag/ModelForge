@@ -129,6 +129,7 @@ class ImageTrainer(Trainer):
                     "modality": MODALITY_IMAGE,
                     "classes": ",".join(ds.classes),
                     "img_size": str(img_size),
+                    "dataset": dataset.name or dataset.filename,
                 },
             )
 

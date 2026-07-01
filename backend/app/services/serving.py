@@ -21,23 +21,36 @@ logger = logging.getLogger(__name__)
 _model_cache: dict[tuple[str, str], Any] = {}
 
 
-def list_model_versions() -> list[dict[str, str]]:
-    """Return EVERY registered model's versions from the MLflow registry (name +
-    version), so the deploy UI can show meaningful names instead of bare numbers.
+def list_model_versions() -> list[dict[str, Any]]:
+    """Return EVERY registered model version from the MLflow registry, enriched
+    with the training details logged for its run (model_type, task, dataset,
+    hyperparameters, metrics) so the deploy UI can show informative cards.
     Best-effort: returns [] if MLflow is unreachable."""
     try:
         client = MlflowClient(tracking_uri=settings.mlflow_tracking_uri)
+        out: list[dict[str, Any]] = []
         # search_model_versions() with no filter returns EVERY version across all
         # registered models. (search_registered_models() proved unreliable here.)
-        out = [
-            {
-                "name": v.name,
-                "version": v.version,
-                "stage": v.current_stage,
-                "status": v.status,
-            }
-            for v in client.search_model_versions()
-        ]
+        for v in client.search_model_versions():
+            params: dict[str, str] = {}
+            metrics: dict[str, float] = {}
+            try:
+                if v.run_id:
+                    run = client.get_run(v.run_id)
+                    params = dict(run.data.params)
+                    metrics = dict(run.data.metrics)
+            except Exception:  # noqa: BLE001 — details are best-effort
+                pass
+            out.append(
+                {
+                    "name": v.name,
+                    "version": v.version,
+                    "stage": v.current_stage,
+                    "status": v.status,
+                    "params": params,
+                    "metrics": metrics,
+                }
+            )
         # Group by name, newest version first within each.
         out.sort(key=lambda x: (x["name"], -int(x["version"])))
         return out

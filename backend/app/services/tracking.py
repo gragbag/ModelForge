@@ -8,6 +8,7 @@ This is best-effort: if MLflow is unreachable, we log a warning but DON'T fail
 the training job — tracking is secondary to actually producing the model.
 """
 
+import json
 import logging
 
 import mlflow
@@ -46,6 +47,8 @@ def log_run(
             mlflow.log_param("model_type", job.model_type)
             mlflow.log_param("target_column", job.target_column)
             mlflow.log_param("task_type", job.task_type.value)
+            if job.hyperparameters:
+                mlflow.log_param("hyperparameters", json.dumps(job.hyperparameters))
             for key, param_value in (extra_params or {}).items():
                 mlflow.log_param(key, param_value)
 

@@ -75,7 +75,7 @@ def list_deployments(
 @router.get("/available-models")
 def available_models(
     current_user: User = Depends(get_current_user),
-) -> list[dict[str, str]]:
+) -> list[dict]:
     """List all registered model versions available to deploy (from MLflow), so
     the UI can show meaningful names instead of asking the user to type one."""
     return serving.list_model_versions()

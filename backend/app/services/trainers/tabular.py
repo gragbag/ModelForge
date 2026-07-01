@@ -42,7 +42,10 @@ class TabularTrainer(Trainer):
 
         # Log to MLflow (params, metrics, model + registry). Best-effort:
         # tracking.log_run swallows its own errors so it can't fail the job.
-        tracking.log_run(job, model, metrics)
+        tracking.log_run(
+            job, model, metrics,
+            extra_params={"dataset": dataset.name or dataset.filename},
+        )
 
         # Deterministic key: a re-run overwrites the SAME S3 object rather than
         # creating duplicates (idempotency).
